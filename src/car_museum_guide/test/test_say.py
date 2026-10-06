@@ -80,7 +80,7 @@ def test_text_is_spoken_on_the_usb_speaker(tmp_path):
     add_card(tmp_path, 1, 'Seri', usb=True)
     aplay = FakeAplay()
 
-    exit_code = say.main(['Hallo, ich bin Ihr Museumsführer.'],
+    exit_code = say.main(['Hallo. Ich bin Ihr Museumsführer.'],
                          asound_root=tmp_path, player=aplay)
 
     assert exit_code == 0
@@ -88,7 +88,7 @@ def test_text_is_spoken_on_the_usb_speaker(tmp_path):
     device, frames = aplay.played[0]
     assert device == 'plughw:CARD=Seri,DEV=0'
     assert peak(frames) > 1000
-    assert aplay.seconds > 1.5  # the whole sentence, not just a word
+    assert aplay.seconds > 1.5  # both sentences, not just the first word
 
 
 @needs_default_voice
