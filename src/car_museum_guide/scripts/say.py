@@ -76,7 +76,14 @@ def main(argv=None, asound_root=Path('/proc/asound'), player=aplay):
         if not synthesize(args.text, wav_path, voice_path, args.volume):
             print(f'say.py: nothing to say in {args.text!r}', file=sys.stderr)
             return 1
-        player(wav_path, device)
+        try:
+            player(wav_path, device)
+        except subprocess.CalledProcessError as error:
+            print(f'say.py: aplay could not play on {device} (exit {error.returncode})',
+                  file=sys.stderr)
+            return 1
+        except KeyboardInterrupt:
+            return 130  # the shell's convention for a command stopped by Ctrl-C
     return 0
 
 

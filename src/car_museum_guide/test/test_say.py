@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import subprocess
 import wave
 
 import pytest
@@ -131,3 +132,31 @@ def test_text_with_nothing_to_say_is_refused(tmp_path, capsys):
     assert exit_code == 1
     assert aplay.played == []
     assert 'nothing to say' in capsys.readouterr().err
+
+
+def busy_aplay(wav_path, device):
+    """Behaves like aplay when another sound is still playing on the device."""
+    raise subprocess.CalledProcessError(1, ['aplay', '-D', device, str(wav_path)])
+
+
+@needs_default_voice
+def test_speaker_that_cannot_play_is_reported(tmp_path, capsys):
+    add_card(tmp_path, 1, 'Seri', usb=True)
+
+    exit_code = say.main(['Hallo'], asound_root=tmp_path, player=busy_aplay)
+
+    assert exit_code == 1
+    assert 'plughw:CARD=Seri,DEV=0' in capsys.readouterr().err
+
+
+def interrupted_aplay(wav_path, device):
+    raise KeyboardInterrupt
+
+
+@needs_default_voice
+def test_ctrl_c_while_speaking_stops_like_any_interrupted_command(tmp_path):
+    add_card(tmp_path, 1, 'Seri', usb=True)
+
+    exit_code = say.main(['Hallo'], asound_root=tmp_path, player=interrupted_aplay)
+
+    assert exit_code == 130
