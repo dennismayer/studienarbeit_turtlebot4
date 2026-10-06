@@ -64,8 +64,9 @@ def test_without_usb_speaker_nothing_is_played_and_the_error_says_so(tmp_path, c
 
 
 needs_default_voice = pytest.mark.skipif(
-    not (say.VOICES_DIR / f'{say.DEFAULT_VOICE}.onnx').exists(),
-    reason='default Piper voice not downloaded')
+    importlib.util.find_spec('piper') is None
+    or not (say.VOICES_DIR / f'{say.DEFAULT_VOICE}.onnx').exists(),
+    reason='needs piper-tts and the default voice (run in /home/ubuntu/.venv/turtlebot_venv)')
 
 
 def peak(frames):

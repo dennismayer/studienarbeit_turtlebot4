@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/home/ubuntu/.venv/turtlebot_venv/bin/python
 """Speak German text on the robot's USB speaker with Piper."""
 
 import argparse
@@ -68,7 +68,7 @@ def speak(argv, asound_root, player):
     voice_path = VOICES_DIR / f'{args.voice}.onnx'
     if not voice_path.exists():
         print(f'say.py: voice {args.voice} not found in {VOICES_DIR}; download it with\n'
-              f'  python -m piper.download_voices --data-dir {VOICES_DIR} {args.voice}',
+              f'  {sys.executable} -m piper.download_voices --data-dir {VOICES_DIR} {args.voice}',
               file=sys.stderr)
         return 1
 
