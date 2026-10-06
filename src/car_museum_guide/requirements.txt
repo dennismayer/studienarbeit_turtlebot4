@@ -1,0 +1,31 @@
+# ============================================================
+# Car Museum Guide - Pinned Requirements (Lock File)
+# ============================================================
+
+# Audio processing
+numpy==1.26.4
+
+# SPEECH RECOGNITION (Ears)
+pvporcupine==3.0.3
+
+# Audio Drivers
+pyaudio==0.2.14
+sounddevice==0.5.1
+soundfile==0.13.0
+
+# Speech-to-Text Engine
+faster-whisper==1.1.0
+
+#TEXT-TO-SPEECH (Voice)
+gTTS==2.5.4
+
+# Azure OpenAI Client
+openai==1.59.3
+
+# Utilities
+python-dotenv==1.0.1
+colorama==0.4.6
+
+# Networking 
+httpx==0.28.1
+requests==2.32.3

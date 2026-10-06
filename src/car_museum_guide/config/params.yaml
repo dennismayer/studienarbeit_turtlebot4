@@ -1,0 +1,69 @@
+# Car Museum Guide Robot
+# Version: 2.0 
+# Last Updated: 2026-01-14
+
+/**:
+  ros__parameters:
+
+    # Worker Process Paths
+    venv_python_path: '/home/ubuntu/venv_museum/bin/python3'
+    worker_script_path: '/home/ubuntu/car_museum_guide_ws/src/car_museum_guide/scripts/speech_worker.py'
+    tts_worker_script: '/home/ubuntu/car_museum_guide_ws/src/car_museum_guide/scripts/tts_worker.py'
+
+    # Azure OpenAI Configuration
+    azure_openai_endpoint: ""
+    azure_openai_key: ""
+    azure_openai_deployment: "gpt-5-mini-mz"
+    api_version: "2025-04-01-preview"
+    max_completion_tokens: 5000
+    api_retry_attempts: 3
+    api_retry_delay: 2.0
+
+    # Speech Recognition (Whisper STT)
+    whisper_model: "base"
+    whisper_device: "cpu"
+    whisper_sample_rate: 16000
+    whisper_max_seconds: 12.0
+    energy_threshold: 500
+    min_confidence: 0.5
+
+    # Text-to-Speech (gTTS)
+    language: "de"
+    tts_volume_boost: 4.0
+    tts_speed: "normal"
+    tts_timeout: 20.0    //25s sichere 
+
+    # Wake Word Detection (Porcupine)
+    porcupine_access_key: ""
+    wake_word_enabled: true
+    wake_word: "computer"
+    wake_word_sensitivity: 0.5
+    auto_restart: true
+
+    # Visitor Detection (LiDAR-based)
+    enable_visitor_detection: true
+    detection_distance_min: 0.8
+    detection_distance_max: 2.5
+    detection_angle_range: 60.0
+    person_width_min: 0.35
+    person_width_max: 0.7
+    stability_threshold: 8
+    visitor_timeout: 10.0
+    cooldown_period: 5.0
+    min_confidence: 0.75
+    lidar_frame_skip_rate: 3
+    use_camera: false
+
+    # Robot Home Position
+    home_position_x: 0.0
+    home_position_y: 0.0
+    home_position_theta: 0.0
+    auto_return_home: true
+    idle_timeout: 300.0
+
+    # Navigation Configuration
+    nav_retry_attempts: 3
+    nav_retry_delay: 5.0
+
+    # Museum Configuration
+    exhibits_config: "config/car_exhibits.json"

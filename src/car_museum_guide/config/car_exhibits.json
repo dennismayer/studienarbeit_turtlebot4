@@ -1,0 +1,72 @@
+{
+    "Ferrari 250 GTO": {
+      "position": {
+        "x": 2.5,
+        "y": 1.0,
+        "orientation": 0.0
+      }
+    },
+    "Porsche 911 Carrera": {
+      "position": {
+        "x": 0.952,
+        "y": 6.583,
+        "orientation": -1.4
+      }
+    },
+    "Ford Mustang 1967": {
+      "position": {
+        "x": 2.478,
+        "y": 0.3487,
+        "orientation": -1.4
+      }
+    },
+    "Chevrolet Corvette Stingray": {
+      "position": {
+        "x": 7.430,
+        "y": -3.226,
+        "orientation": 0.0
+      }
+    },
+    "Mercedes-Benz 300SL Gullwing": {
+      "position": {
+        "x": 3.204,
+        "y": -5.068,
+        "orientation": -1.4
+      }
+    },
+    "Lamborghini Miura": {
+      "position": {
+        "x": -1.134,
+        "y": -5.366,
+        "orientation": 0.0
+      }
+    },
+    "Bugatti Type 57": {
+      "position": {
+        "x": 1.491,
+        "y": -1.681,
+        "orientation": 0.0
+      }
+    },
+    "Aston Martin DB5": {
+      "position": {
+        "x": 9.0,
+        "y": 7.0,
+        "orientation": 2.0
+      }
+    },
+    "Jaguar E-Type": {
+      "position": {
+        "x": 4.0,
+        "y": 9.5,
+        "orientation": 1.2
+      }
+    },
+    "Rolls-Royce Phantom": {
+      "position": {
+        "x": 7.5,
+        "y": 8.5,
+        "orientation": 3.9
+      }
+    }
+  }
