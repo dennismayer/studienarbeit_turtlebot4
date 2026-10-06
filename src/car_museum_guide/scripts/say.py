@@ -83,22 +83,29 @@ def speak(argv, asound_root, player):
             print(f'say.py: aplay could not play on {device} (exit {error.returncode})',
                   file=sys.stderr)
             return 1
-        except KeyboardInterrupt:
-            return 130  # the shell's convention for a command stopped by Ctrl-C
     return 0
 
 
-def exit_on_signal(signum, frame):
-    sys.exit(128 + signum)
-
-
 def main(argv=None, asound_root=Path('/proc/asound'), player=aplay):
-    # SIGTERM (e.g. from ros2 launch) must unwind normally so the temporary WAV is removed.
-    previous = signal.signal(signal.SIGTERM, exit_on_signal)
+    stopped_by = []
+
+    def stop(signum, frame):
+        stopped_by.append(signum)
+        raise KeyboardInterrupt
+
+    previous = {signum: signal.signal(signum, stop)
+                for signum in (signal.SIGINT, signal.SIGTERM)}
     try:
         return speak(argv, asound_root, player)
+    except BaseException:
+        # Libraries may turn the interrupt into another error (onnxruntime raises
+        # ImportError when Ctrl-C lands in `import piper`); stopped is stopped.
+        if stopped_by:
+            return 128 + stopped_by[0]  # the shell's convention: 130 for Ctrl-C, 143 for SIGTERM
+        raise
     finally:
-        signal.signal(signal.SIGTERM, previous)
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
 
 
 if __name__ == '__main__':

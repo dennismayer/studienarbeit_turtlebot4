@@ -154,17 +154,38 @@ def test_speaker_that_cannot_play_is_reported(tmp_path, capsys):
     assert 'plughw:CARD=Seri,DEV=0' in capsys.readouterr().err
 
 
-def interrupted_aplay(wav_path, device):
-    raise KeyboardInterrupt
+def stopped_aplay(signum, library_error=None):
+    """Plays until a stop signal arrives, optionally turned into another error.
+
+    onnxruntime's C extension turns a Ctrl-C during `import piper` into
+    ImportError('initialization failed'); library_error mimics that.
+    """
+    def play(wav_path, device):
+        try:
+            os.kill(os.getpid(), signum)
+            time.sleep(5)
+        except BaseException:
+            if library_error is None:
+                raise
+            raise library_error
+
+    return play
 
 
 @needs_default_voice
-def test_ctrl_c_while_speaking_stops_like_any_interrupted_command(tmp_path):
+@pytest.mark.parametrize('signum, library_error, expected_exit', [
+    (signal.SIGINT, None, 130),
+    (signal.SIGINT, ImportError('initialization failed'), 130),
+])
+def test_stop_signal_while_speaking_exits_quietly(
+        tmp_path, capsys, signum, library_error, expected_exit):
     add_card(tmp_path, 1, 'Seri', usb=True)
 
-    exit_code = say.main(['Hallo'], asound_root=tmp_path, player=interrupted_aplay)
+    exit_code = say.main(['Hallo'], asound_root=tmp_path,
+                         player=stopped_aplay(signum, library_error))
 
-    assert exit_code == 130
+    assert exit_code == expected_exit
+    assert 'Traceback' not in capsys.readouterr().err
 
 
 SLOW_APLAY_RUN = """
@@ -196,4 +217,43 @@ def test_stopping_with_sigterm_leaves_no_wav_behind(tmp_path):
     run.send_signal(signal.SIGTERM)
     run.wait(timeout=10)
 
+    assert run.returncode == 143
     assert list(tmp.rglob('*.wav')) == []
+
+
+SPEAK_RUN = """
+import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location('say', sys.argv[1])
+say = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(say)
+pathlib.Path(sys.argv[3]).touch()
+sys.exit(say.main(['Hallo'], asound_root=pathlib.Path(sys.argv[2]), player=lambda *_: None))
+"""
+
+
+@needs_default_voice
+def test_ctrl_c_before_speaking_starts_also_stops_quietly(tmp_path):
+    asound_root, started = tmp_path / 'asound', tmp_path / 'started'
+    add_card(asound_root, 1, 'Seri', usb=True)
+    run = subprocess.Popen(
+        [sys.executable, '-c', SPEAK_RUN, str(SAY_PATH), str(asound_root), str(started)],
+        stderr=subprocess.PIPE, text=True)
+    deadline = time.monotonic() + 60
+    while not started.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    time.sleep(0.5)  # now inside main, loading the voice
+
+    run.send_signal(signal.SIGINT)
+    _, stderr = run.communicate(timeout=30)
+
+    assert run.returncode == 130
+    assert 'Traceback' not in stderr
+
+
+def test_callers_own_signal_handling_is_restored(tmp_path):
+    add_card(tmp_path, 0, 'Headphones')
+    before = signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGTERM)
+
+    say.main(['Hallo'], asound_root=tmp_path, player=FakeAplay())
+
+    assert (signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGTERM)) == before
