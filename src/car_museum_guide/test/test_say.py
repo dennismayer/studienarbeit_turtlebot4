@@ -1,6 +1,10 @@
 import importlib.util
+import os
 from pathlib import Path
+import signal
 import subprocess
+import sys
+import time
 import wave
 
 import pytest
@@ -160,3 +164,35 @@ def test_ctrl_c_while_speaking_stops_like_any_interrupted_command(tmp_path):
     exit_code = say.main(['Hallo'], asound_root=tmp_path, player=interrupted_aplay)
 
     assert exit_code == 130
+
+
+SLOW_APLAY_RUN = """
+import importlib.util, pathlib, sys, time
+spec = importlib.util.spec_from_file_location('say', sys.argv[1])
+say = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(say)
+
+def slow_aplay(wav_path, device):
+    pathlib.Path(sys.argv[3]).touch()
+    time.sleep(60)
+
+sys.exit(say.main(['Hallo'], asound_root=pathlib.Path(sys.argv[2]), player=slow_aplay))
+"""
+
+
+@needs_default_voice
+def test_stopping_with_sigterm_leaves_no_wav_behind(tmp_path):
+    asound_root, tmp, playing = tmp_path / 'asound', tmp_path / 'tmp', tmp_path / 'playing'
+    add_card(asound_root, 1, 'Seri', usb=True)
+    tmp.mkdir()
+    run = subprocess.Popen(
+        [sys.executable, '-c', SLOW_APLAY_RUN, str(SAY_PATH), str(asound_root), str(playing)],
+        env={**os.environ, 'TMPDIR': str(tmp)})
+    deadline = time.monotonic() + 60
+    while not playing.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+
+    run.send_signal(signal.SIGTERM)
+    run.wait(timeout=10)
+
+    assert list(tmp.rglob('*.wav')) == []

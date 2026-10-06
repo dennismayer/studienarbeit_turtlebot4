@@ -3,6 +3,7 @@
 
 import argparse
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -50,7 +51,7 @@ def synthesize(text, wav_path, voice_path, volume):
     return True
 
 
-def main(argv=None, asound_root=Path('/proc/asound'), player=aplay):
+def speak(argv, asound_root, player):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('text', help='what the robot should say')
     parser.add_argument('--voice', default=DEFAULT_VOICE,
@@ -85,6 +86,19 @@ def main(argv=None, asound_root=Path('/proc/asound'), player=aplay):
         except KeyboardInterrupt:
             return 130  # the shell's convention for a command stopped by Ctrl-C
     return 0
+
+
+def exit_on_signal(signum, frame):
+    sys.exit(128 + signum)
+
+
+def main(argv=None, asound_root=Path('/proc/asound'), player=aplay):
+    # SIGTERM (e.g. from ros2 launch) must unwind normally so the temporary WAV is removed.
+    previous = signal.signal(signal.SIGTERM, exit_on_signal)
+    try:
+        return speak(argv, asound_root, player)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 if __name__ == '__main__':
