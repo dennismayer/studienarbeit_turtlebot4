@@ -29,6 +29,7 @@ class FakeAplay:
     def __call__(self, wav_path, device):
         with wave.open(str(wav_path), 'rb') as wav:
             frames = wav.readframes(wav.getnframes())
+            self.seconds = wav.getnframes() / wav.getframerate()
         self.played.append((device, frames))
 
 
@@ -81,6 +82,7 @@ def test_text_is_spoken_on_the_usb_speaker(tmp_path):
     device, frames = aplay.played[0]
     assert device == 'plughw:CARD=Seri,DEV=0'
     assert peak(frames) > 1000
+    assert aplay.seconds > 1.5  # the whole sentence, not just a word
 
 
 @needs_default_voice
@@ -93,3 +95,15 @@ def test_lower_volume_is_played_quieter(tmp_path):
 
     normal, quiet = (peak(frames) for _, frames in aplay.played)
     assert quiet < normal * 0.5
+
+
+def test_voice_that_is_not_downloaded_is_refused(tmp_path, capsys):
+    add_card(tmp_path, 1, 'Seri', usb=True)
+    aplay = FakeAplay()
+
+    exit_code = say.main(['Hallo', '--voice', 'de_DE-nobody-low'],
+                         asound_root=tmp_path, player=aplay)
+
+    assert exit_code == 1
+    assert aplay.played == []
+    assert 'de_DE-nobody-low' in capsys.readouterr().err
