@@ -107,3 +107,15 @@ def test_voice_that_is_not_downloaded_is_refused(tmp_path, capsys):
     assert exit_code == 1
     assert aplay.played == []
     assert 'de_DE-nobody-low' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('volume', ['inf', 'nan', '0', '-1', '1.5'])
+def test_volume_outside_what_the_speaker_can_play_is_refused(tmp_path, volume):
+    add_card(tmp_path, 1, 'Seri', usb=True)
+    aplay = FakeAplay()
+
+    with pytest.raises(SystemExit) as refused:
+        say.main(['Hallo', '--volume', volume], asound_root=tmp_path, player=aplay)
+
+    assert refused.value.code == 2
+    assert aplay.played == []

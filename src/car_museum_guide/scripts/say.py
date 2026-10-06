@@ -20,6 +20,14 @@ def find_usb_speaker(asound_root=Path('/proc/asound')):
             return f'plughw:CARD={card_id},DEV=0'
 
 
+def volume(text):
+    """Parse --volume, refusing values the speaker cannot play."""
+    value = float(text)
+    if not 0 < value <= 1:  # Piper already normalizes to full scale at 1
+        raise argparse.ArgumentTypeError(f'{text} is not between 0 and 1')
+    return value
+
+
 def aplay(wav_path, device):
     """Play a WAV file on an ALSA device and wait until it has finished."""
     subprocess.run(['aplay', '-q', '-D', device, str(wav_path)], check=True)
@@ -38,8 +46,8 @@ def main(argv=None, asound_root=Path('/proc/asound'), player=aplay):
     parser.add_argument('text', help='what the robot should say')
     parser.add_argument('--voice', default=DEFAULT_VOICE,
                         help=f'Piper voice in {VOICES_DIR} (default: %(default)s)')
-    parser.add_argument('--volume', type=float, default=1.0,
-                        help='loudness multiplier, e.g. 0.5 for half as loud')
+    parser.add_argument('--volume', type=volume, default=1.0,
+                        help='between 0 and 1 (default: 1, full scale); e.g. 0.5 is quieter')
     args = parser.parse_args(argv)
 
     device = find_usb_speaker(asound_root)
