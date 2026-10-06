@@ -25,17 +25,19 @@ def aplay(wav_path, device):
     subprocess.run(['aplay', '-q', '-D', device, str(wav_path)], check=True)
 
 
-def synthesize(text, wav_path):
-    from piper import PiperVoice
+def synthesize(text, wav_path, volume):
+    from piper import PiperVoice, SynthesisConfig
 
     voice = PiperVoice.load(str(VOICES_DIR / f'{DEFAULT_VOICE}.onnx'))
     with wave.open(str(wav_path), 'wb') as wav_file:
-        voice.synthesize_wav(text, wav_file)
+        voice.synthesize_wav(text, wav_file, syn_config=SynthesisConfig(volume=volume))
 
 
 def main(argv=None, asound_root=Path('/proc/asound'), player=aplay):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('text', help='what the robot should say')
+    parser.add_argument('--volume', type=float, default=1.0,
+                        help='loudness multiplier, e.g. 0.5 for half as loud')
     args = parser.parse_args(argv)
 
     device = find_usb_speaker(asound_root)
@@ -45,7 +47,7 @@ def main(argv=None, asound_root=Path('/proc/asound'), player=aplay):
 
     with tempfile.TemporaryDirectory() as tmp:
         wav_path = Path(tmp) / 'say.wav'
-        synthesize(args.text, wav_path)
+        synthesize(args.text, wav_path, args.volume)
         player(wav_path, device)
     return 0
 

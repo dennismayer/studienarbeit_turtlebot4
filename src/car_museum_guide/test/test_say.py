@@ -81,3 +81,15 @@ def test_text_is_spoken_on_the_usb_speaker(tmp_path):
     device, frames = aplay.played[0]
     assert device == 'plughw:CARD=Seri,DEV=0'
     assert peak(frames) > 1000
+
+
+@needs_default_voice
+def test_lower_volume_is_played_quieter(tmp_path):
+    add_card(tmp_path, 1, 'Seri', usb=True)
+    aplay = FakeAplay()
+
+    say.main(['Guten Tag.'], asound_root=tmp_path, player=aplay)
+    say.main(['Guten Tag.', '--volume', '0.3'], asound_root=tmp_path, player=aplay)
+
+    normal, quiet = (peak(frames) for _, frames in aplay.played)
+    assert quiet < normal * 0.5
