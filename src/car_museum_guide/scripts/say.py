@@ -34,11 +34,20 @@ def aplay(wav_path, device):
 
 
 def synthesize(text, wav_path, voice_path, volume):
+    """Write the spoken text to wav_path; return False when there is nothing to say."""
     from piper import PiperVoice, SynthesisConfig
 
     voice = PiperVoice.load(str(voice_path))
+    chunks = list(voice.synthesize(text, syn_config=SynthesisConfig(volume=volume)))
+    if not chunks:
+        return False
     with wave.open(str(wav_path), 'wb') as wav_file:
-        voice.synthesize_wav(text, wav_file, syn_config=SynthesisConfig(volume=volume))
+        wav_file.setframerate(chunks[0].sample_rate)
+        wav_file.setsampwidth(chunks[0].sample_width)
+        wav_file.setnchannels(chunks[0].sample_channels)
+        for chunk in chunks:
+            wav_file.writeframes(chunk.audio_int16_bytes)
+    return True
 
 
 def main(argv=None, asound_root=Path('/proc/asound'), player=aplay):
@@ -64,7 +73,9 @@ def main(argv=None, asound_root=Path('/proc/asound'), player=aplay):
 
     with tempfile.TemporaryDirectory() as tmp:
         wav_path = Path(tmp) / 'say.wav'
-        synthesize(args.text, wav_path, voice_path, args.volume)
+        if not synthesize(args.text, wav_path, voice_path, args.volume):
+            print(f'say.py: nothing to say in {args.text!r}', file=sys.stderr)
+            return 1
         player(wav_path, device)
     return 0
 

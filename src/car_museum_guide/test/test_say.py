@@ -119,3 +119,15 @@ def test_volume_outside_what_the_speaker_can_play_is_refused(tmp_path, volume):
 
     assert refused.value.code == 2
     assert aplay.played == []
+
+
+@needs_default_voice
+def test_text_with_nothing_to_say_is_refused(tmp_path, capsys):
+    add_card(tmp_path, 1, 'Seri', usb=True)
+    aplay = FakeAplay()
+
+    exit_code = say.main(['...'], asound_root=tmp_path, player=aplay)
+
+    assert exit_code == 1
+    assert aplay.played == []
+    assert 'nothing to say' in capsys.readouterr().err
