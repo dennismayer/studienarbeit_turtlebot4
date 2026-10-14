@@ -1,0 +1,4 @@
+NAMESPACEWORKERS = "/AudioWorkers"
+
+AUDIOCREATIONNODENAME="AudioCreationWorker"
+AUDIOCREATIONACTIONNAME="audioCreation"
