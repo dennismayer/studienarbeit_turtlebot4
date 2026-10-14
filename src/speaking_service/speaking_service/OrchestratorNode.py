@@ -33,7 +33,7 @@ def main(args=None):
     
     orchestrator_node = SpeechOrchestratorNode()
     
-    future = orchestrator_node.send_goal("Test")
+    future = orchestrator_node.send_goal("Hallo, wie geht es euch?")
 
     rclpy.spin_until_future_complete(orchestrator_node, future)
 
