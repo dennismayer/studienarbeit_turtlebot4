@@ -22,6 +22,17 @@ class AudioCreationActionServer(Node):
     def __init__(self):
         super().__init__(constants.AUDIOCREATIONNODENAME, namespace=constants.NAMESPACEWORKERS)
         
+        # load voice 
+        # TODO error management
+        self.__voice = PiperVoice.load(constants.VOICE_PATH)
+        self.get_logger().info("Voice loaded!")
+        
+        # TODO write in constants or even as parameter?
+        ros_home = Path(os.environ.get('ROS_HOME', Path.home() / '.ros'))
+        self.__audio_dir = ros_home / 'speaking_service' / 'audio_cache'
+        self.__sr = constants.CURRENT_VOICE_SAMPLE_RATE
+        self.__ch = constants.CURRENT_VOICE_CHANNELS
+                
         # Start the server
         self.get_logger().info("Starting Server ...")
         # using a Reentrant Callback Group because audio creation can be done in parallel 
@@ -34,17 +45,6 @@ class AudioCreationActionServer(Node):
             callback_group=ReentrantCallbackGroup()
         )
         self.get_logger().info("Server started!")
-        
-        # load voice 
-        # TODO error management
-        self.__voice = PiperVoice.load(constants.VOICE_PATH)
-        self.get_logger().info("Voice loaded!")
-        
-        # TODO write in constants or even as parameter?
-        ros_home = Path(os.environ.get('ROS_HOME', Path.home() / '.ros'))
-        self.__audio_dir = ros_home / 'speaking_service' / 'audio_cache'
-        self.__sr = constants.CURRENT_VOICE_SAMPLE_RATE
-        self.__ch = constants.CURRENT_VOICE_CHANNELS
         
     def execute_callback(self, goal_handle: ServerGoalHandle) -> AudioCreation.Result:
         self.get_logger().info("Executing goal ...")

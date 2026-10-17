@@ -1,0 +1,16 @@
+# Goal
+float32 start_timeout 5.0     # give up if no speech starts within this many seconds
+float32 silence_duration 2.0  # stop after this much silence once speech was heard
+float32 max_duration 15.0     # hard limit on recording length
+---
+# Result
+bool success
+string message
+string file_name
+float32 duration              # length of the recorded audio in seconds
+---
+# Feedback
+uint8 WAITING_FOR_SPEECH=0
+uint8 RECORDING=1
+uint8 state
+float32 recorded_time
