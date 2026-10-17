@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'audioCreationWorker = speaking_service.AudioCreationWorkerNode:main',
             'audioPlayerWorker = speaking_service.AudioPlayerWorkerNode:main',
+            'audioListenderWorker = speaking_service.AudioListenerWorkerNode:main',
         ],
     },
 )
