@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'audioCreationWorker = speaking_service.AudioCreationWorkerNode:main',
+            'audioPlayerWorker = speaking_service.AudioPlayerWorkerNode:main',
         ],
     },
 )

@@ -43,11 +43,19 @@ class AudioCreationActionServer(Node):
         # TODO write in constants or even as parameter?
         ros_home = Path(os.environ.get('ROS_HOME', Path.home() / '.ros'))
         self.__audio_dir = ros_home / 'speaking_service' / 'audio_cache'
+        self.__sr = constants.CURRENT_VOICE_SAMPLE_RATE
+        self.__ch = constants.CURRENT_VOICE_CHANNELS
         
     def execute_callback(self, goal_handle: ServerGoalHandle) -> AudioCreation.Result:
         self.get_logger().info("Executing goal ...")
         request: AudioCreation.Goal = goal_handle.request
         self.get_logger().info(f"Text to Transform: {request.text}")
+        
+        # abort if text is empty
+        if not request.text or request.text.strip() == "":
+            self.get_logger().error("Text is empty!")
+            goal_handle.abort()
+            return AudioCreation.Result()
         
         # Initial feedback
         feedback_msg = AudioCreation.Feedback()
@@ -62,13 +70,11 @@ class AudioCreationActionServer(Node):
         goal_handle.publish_feedback(feedback_msg)
         
         self.get_logger().info("Finished with synthesizing...")
-        sr = chunks[0].sample_rate
-        ch = chunks[0].sample_channels
         file_path = self.__audio_dir / f'{uuid.uuid4().hex}.wav'
         
-        with sf.SoundFile(file_path, mode="x", samplerate=sr, channels=ch) as f:
-            # TODO temporary! rather use constant ouputstream later
-            f.write(np.zeros((int(sr * constants.LEADING_SILENCE_S), ch), dtype=np.float32))
+        self.get_logger().info(f"SR: {self.__sr} Channels: {self.__ch} FilePath: {file_path}")
+        
+        with sf.SoundFile(file_path, mode="x", samplerate=self.__sr, channels=self.__ch) as f:
             for chunk in chunks:
                 f.write(chunk.audio_float_array)
         
