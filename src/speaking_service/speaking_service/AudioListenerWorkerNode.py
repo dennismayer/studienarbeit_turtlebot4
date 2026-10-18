@@ -8,12 +8,14 @@ import uuid
 import numpy as np
 from threading import Lock, Event
 from collections import deque
+import sys
 
 import rclpy
 from rclpy.action.server import ActionServer, ServerGoalHandle, GoalResponse, CancelResponse
 from rclpy.node import Node
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.utilities import try_shutdown
 
 from speaking_interfaces.action import AudioListener
 
@@ -195,11 +197,11 @@ class AudioListenerActionServer(Node):
             return GoalResponse.REJECT
         return GoalResponse.ACCEPT
     
-    def assemble_result(self, success: bool, message: str, file_name: str, duration: float):
+    def assemble_result(self, success: bool, message: str, file_path: str, duration: float):
         result = AudioListener.Result()
         result.success = success
         result.message = message
-        result.file_name = file_name
+        result.file_path = file_path
         result.duration = duration
         return result
     
@@ -217,26 +219,27 @@ class AudioListenerActionServer(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    
-    audio_creation_action_server = AudioListenerActionServer()
-    
-    executor = MultiThreadedExecutor()
-    
+
+    audio_listener_action_server = None
+    executor = None
+
     try:
-        executor.add_node(audio_creation_action_server)
+        audio_listener_action_server = AudioListenerActionServer()
+        executor = MultiThreadedExecutor()
+        executor.add_node(audio_listener_action_server)
         executor.spin()
+    except RuntimeError as e:
+        print(e, file=sys.stderr)
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received, shutting down...")
     except Exception as e:
         print(f"Exception occurred in main thread: {e}")
-    
-    executor.shutdown()
-    audio_creation_action_server.destroy_node()
-    
-    try:
-        rclpy.shutdown()
-    except:
-        pass
-    
+    finally:
+        if executor is not None:
+            executor.shutdown()
+        if audio_listener_action_server is not None:
+            audio_listener_action_server.destroy_node()
+        try_shutdown()
+
 if __name__ == "__main__":
     main()

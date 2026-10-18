@@ -4,12 +4,14 @@ import soundfile as sf
 import numpy as np
 import os
 from pathlib import Path
+import sys
 
 import rclpy
 from rclpy.action.server import ActionServer, ServerGoalHandle, CancelResponse
 from rclpy.node import Node
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.utilities import try_shutdown
 
 from speaking_interfaces.action import AudioTranscriber
 
@@ -46,17 +48,17 @@ class AudioTranscriberActionServer(Node):
         try:
             self.get_logger().info("Executing goal ...")
             request: AudioTranscriber.Goal = goal_handle.request
-            self.get_logger().info(f"File: {request.file_name}")
+            self.get_logger().info(f"File: {request.file_path}")
             self.get_logger().info(f"Prompt: {request.initial_prompt}")
             
             # load audio
             self.get_logger().info("Loading data...")
-            info = sf.info(request.file_name)
+            info = sf.info(request.file_path)
             # check sample rate and channel count
             if info.samplerate != constants.TRANSCRIPTION_SR or info.channels != constants.TRANSCRIPTION_CH:
                 raise ValueError(f"Wrong sample rate ({info.samplerate} Hz) or Channel count ({info.channels})")
             
-            audio, _ = sf.read(request.file_name, dtype="float32")
+            audio, _ = sf.read(request.file_path, dtype="float32")
             
             # define Transcription 
             segments, info = self.__model.transcribe(
@@ -93,7 +95,7 @@ class AudioTranscriberActionServer(Node):
             goal_handle.succeed()     
             
             # delete file, but only if it lies inside the recording cache
-            path_to_file = Path(request.file_name).resolve()
+            path_to_file = Path(request.file_path).resolve()
             if path_to_file.is_relative_to(self.__recorded_audio_dir):
                 try:
                     path_to_file.unlink(missing_ok=True)
@@ -126,26 +128,27 @@ class AudioTranscriberActionServer(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    
-    audio_transcriber_action_server = AudioTranscriberActionServer()
-    
-    executor = MultiThreadedExecutor()
-    
+
+    audio_transcriber_action_server = None
+    executor = None
+
     try:
+        audio_transcriber_action_server = AudioTranscriberActionServer()
+        executor = MultiThreadedExecutor()
         executor.add_node(audio_transcriber_action_server)
         executor.spin()
+    except RuntimeError as e:
+        print(e, file=sys.stderr)
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received, shutting down...")
     except Exception as e:
         print(f"Exception occurred in main thread: {e}")
-    
-    executor.shutdown()
-    audio_transcriber_action_server.destroy_node()
-    
-    try:
-        rclpy.shutdown()
-    except:
-        pass
-    
+    finally:
+        if executor is not None:
+            executor.shutdown()
+        if audio_transcriber_action_server is not None:
+            audio_transcriber_action_server.destroy_node()
+        try_shutdown()
+
 if __name__ == "__main__":
     main()

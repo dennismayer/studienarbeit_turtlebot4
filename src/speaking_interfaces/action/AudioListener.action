@@ -1,16 +1,21 @@
+# Records speech from the microphone into a wav file in the recording cache.
+# Only one goal at a time, others are rejected.
+
 # Goal
-float32 start_timeout 5.0     # give up if no speech starts within this many seconds
-float32 silence_duration 2.0  # stop after this much silence once speech was heard
-float32 max_duration 15.0     # hard limit on recording length
+float32 start_timeout 5.0       # give up if no speech starts within this many seconds
+float32 silence_duration 2.0    # stop after this much silence once speech was heard
+float32 max_duration 15.0       # hard limit on recording length
 ---
 # Result
-bool success
-string message
-string file_name
-float32 duration              # length of the recorded audio in seconds
+bool success                    # true only if recording ended by silence after speech
+string message                  # "FinishedRecording", "Canceled", "StartTimeout", "TotalTimeout",
+                                # "MainQueueTimeout", "NoAudioStream" or the error description
+string file_path                # absolute path of the recorded wav file, pass it on to AudioTranscriber
+                                # also set on "Canceled"/"TotalTimeout" if speech was heard, otherwise ""
+float32 duration                # length of the recorded audio in seconds
 ---
 # Feedback
-uint8 WAITING_FOR_SPEECH=0
-uint8 RECORDING=1
-uint8 state
-float32 recorded_time
+uint8 WAITING_FOR_SPEECH=0      # listening, no speech heard yet
+uint8 RECORDING=1               # speech heard, audio is being written
+uint8 state                     # one of the constants above
+float32 recorded_time           # seconds recorded so far, 0 while waiting for speech

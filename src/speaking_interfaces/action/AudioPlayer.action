@@ -1,6 +1,14 @@
-string file_name
+# Plays a wav file on the audio device. Only one goal at a time, others are rejected.
+
+# Goal
+string file_path                # absolute path of the wav file, e.g. the result of AudioCreation
+                                # must match the voice format (sample rate and channels)
 ---
+# Result
 bool success
-string message
+string message                  # "Done", "Canceled" or the error description
+float32 played_time             # seconds of audio actually played, < total length if canceled
 ---
-float32 remaining_time
+# Feedback
+float32 remaining_time          # seconds of audio left to play
+float32 progress                # 0..1 = played samples / total samples

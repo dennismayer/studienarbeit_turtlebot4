@@ -1,15 +1,19 @@
+# Speech-to-text: transcribes a wav file with faster-whisper.
+# The file is deleted after a successful transcription if it lies in the recording cache.
+
 # Goal
-string file_name                # same name as in AudioPlayer/AudioCreation
+string file_path                # absolute path of the wav file, e.g. the result of AudioListener
+                                # must be 16 kHz mono
 string initial_prompt           # context, e.g. "Es wird nach einem Namen gefragt ..."
 string language "de"            # "" = auto-detect
 ---
 # Result
 bool success
-string message
-string text
-float32 avg_logprob             # mean over segments, close to 0 = confident
-float32 no_speech_prob          # max over segments, high = probably no real speech
+string message                  # "FinishedWithoutError", "Canceled" or the error description
+string text                     # full transcription, segments joined with spaces
+float32 avg_logprob             # mean over segments, close to 0 = confident, NaN if no segments
+float32 no_speech_prob          # max over segments, high = probably no real speech, NaN if no segments
 ---
 # Feedback
-string partial_text
+string partial_text             # transcription of the segments finished so far
 float32 progress                # 0..1 = segment.end / info.duration

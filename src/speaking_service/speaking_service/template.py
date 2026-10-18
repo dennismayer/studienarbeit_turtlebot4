@@ -1,10 +1,12 @@
 import time
+import sys
 
 import rclpy
 from rclpy.action.server import ActionServer, ServerGoalHandle
 from rclpy.node import Node
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.utilities import try_shutdown
 
 from speaking_interfaces.action import AudioCreation
 
@@ -44,31 +46,32 @@ class AudioCreationActionServer(Node):
         
         goal_handle.succeed()
         result = AudioCreation.Result()
-        result.file_name = "Geschafft!"
+        result.file_path = "Geschafft!"
         return result
 
 def main(args=None):
     rclpy.init(args=args)
-    
-    audio_creation_action_server = AudioCreationActionServer()
-    
-    executor = MultiThreadedExecutor()
-    
+
+    audio_creation_action_server = None
+    executor = None
+
     try:
+        audio_creation_action_server = AudioCreationActionServer()
+        executor = MultiThreadedExecutor()
         executor.add_node(audio_creation_action_server)
         executor.spin()
+    except RuntimeError as e:
+        print(e, file=sys.stderr)
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received, shutting down...")
     except Exception as e:
         print(f"Exception occurred in main thread: {e}")
-    
-    executor.shutdown()
-    audio_creation_action_server.destroy_node()
-    
-    try:
-        rclpy.shutdown()
-    except:
-        pass
-    
+    finally:
+        if executor is not None:
+            executor.shutdown()
+        if audio_creation_action_server is not None:
+            audio_creation_action_server.destroy_node()
+        try_shutdown()
+
 if __name__ == "__main__":
     main()

@@ -1,5 +1,12 @@
-string text
+# Text-to-speech: synthesizes text into a wav file in the audio cache.
+
+# Goal
+string text                     # text to speak, must not be empty or whitespace only
 ---
-string file_name
+# Result
+bool success
+string message                  # status or error description
+string file_path                # absolute path of the created wav file, pass it on to AudioPlayer
+float32 duration                # length of the created audio in seconds
 ---
-uint8 status
+# No Feedback

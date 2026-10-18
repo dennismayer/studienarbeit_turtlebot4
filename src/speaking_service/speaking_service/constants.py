@@ -1,5 +1,4 @@
 from pathlib import Path
-from enum import IntEnum
 import json
 
 NAMESPACEWORKERS = "/AudioWorkers"
@@ -47,9 +46,3 @@ TRANSCRIPTION_COMPUTE_TYPE = "int8"
 
 TRANSCRIPTION_SR = 16000
 TRANSCRIPTION_CH = 1
-
-
-class TTS_PROGRESS(IntEnum):
-    INITIAL = 0
-    SYNTHESIZED = 1
-    OUTPUT_CREATED = 2
