@@ -1,0 +1,15 @@
+# Goal
+string file_name                # same name as in AudioPlayer/AudioCreation
+string initial_prompt           # context, e.g. "Es wird nach einem Namen gefragt ..."
+string language "de"            # "" = auto-detect
+---
+# Result
+bool success
+string message
+string text
+float32 avg_logprob             # mean over segments, close to 0 = confident
+float32 no_speech_prob          # max over segments, high = probably no real speech
+---
+# Feedback
+string partial_text
+float32 progress                # 0..1 = segment.end / info.duration
