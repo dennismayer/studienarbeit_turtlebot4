@@ -71,7 +71,9 @@ class FileCache:
         self.logger.info(f"Cache loaded with {len(self.dict)}/{self.cache_size} entries from '{self.audio_dir}'")
     
     @_lock_function
-    def lookup(self, key: str):
+    def lookup(self, text: str):
+        key = FileCache.get_hash(text)
+        
         if key not in self.dict:
             self.logger.debug(f"Cache miss: {key}")
             return None
