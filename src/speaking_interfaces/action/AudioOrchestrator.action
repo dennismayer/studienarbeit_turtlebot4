@@ -1,0 +1,24 @@
+# Goal
+string question_or_sentence
+string initial_prompt
+uint8 NO_RESPONSE = 0
+uint8 UPLOAD_RESPONSE = 1
+uint8 TRANSCRIBE_RESPONSE = 2
+uint8 response_handling
+UploadParams upload_parameters
+ListenerParams listener_parameters
+TranscriberParams transcriber_parameters
+---
+# Result
+bool success
+string message
+string transcribed_text
+---
+# Feedback
+uint8 CREATING_AUDIO=0          # AudioCreation is synthesizing the text
+uint8 PLAYING=1                 # AudioPlayer is playing the created file
+uint8 WAITING_FOR_SPEECH=2      # AudioListener is listening, no speech heard yet
+uint8 RECORDING=3               # AudioListener heard speech and is recording
+uint8 TRANSCRIBING=4            # AudioTranscriber is working on the recording
+uint8 UPLOADING=5               # recording is being uploaded
+uint8 state                     # one of the constants above

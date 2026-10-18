@@ -4,8 +4,8 @@
   <name>speaking_service</name>
   <version>0.0.0</version>
   <description>TODO: Package description</description>
-  <maintainer email="dennis.mayer1204@gmail.com">ubuntu</maintainer>
-  <license>TODO: License declaration</license>
+  <maintainer email="dennis.mayer1204@gmail.com">Dennis Mayer</maintainer>
+  <license>Apache-2.0</license>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

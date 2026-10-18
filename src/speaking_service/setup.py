@@ -13,10 +13,10 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='ubuntu',
+    maintainer='Dennis Mayer',
     maintainer_email='dennis.mayer1204@gmail.com',
     description='TODO: Package description',
-    license='TODO: License declaration',
+    license='Apache-2.0',
     extras_require={
         'test': [
             'pytest',
@@ -26,7 +26,7 @@ setup(
         'console_scripts': [
             'audioCreationWorker = speaking_service.AudioCreationWorkerNode:main',
             'audioPlayerWorker = speaking_service.AudioPlayerWorkerNode:main',
-            'audioListenderWorker = speaking_service.AudioListenerWorkerNode:main',
+            'audioListenerWorker = speaking_service.AudioListenerWorkerNode:main',
             'audioTranscriberWorker = speaking_service.AudioTranscriberWorkerNode:main',
         ],
     },

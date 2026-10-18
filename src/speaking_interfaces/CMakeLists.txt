@@ -17,6 +17,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/AudioPlayer.action"
   "action/AudioListener.action"
   "action/AudioTranscriber.action"
+  "action/AudioOrchestrator.action"
+  "msg/UploadParams.msg"
+  "msg/ListenerParams.msg"
+  "msg/TranscriberParams.msg"
 )
 
 ament_export_dependencies(rosidl_default_runtime)
