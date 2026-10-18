@@ -1,6 +1,5 @@
 from piper import PiperVoice, SynthesisConfig
 import os
-import uuid
 from pathlib import Path
 import soundfile as sf
 import sys
@@ -15,6 +14,7 @@ from rclpy.utilities import try_shutdown
 from speaking_interfaces.action import AudioCreation
 
 import constants
+from cache import FileCache
 
 class AudioCreationActionServer(Node):
     
@@ -69,10 +69,10 @@ class AudioCreationActionServer(Node):
             self.get_logger().info("Start TTS...")
             chunks = self.__voice.synthesize(request.text, syn_config=SynthesisConfig(volume=constants.VOLUME))
             
-            file_path = self.__audio_dir / f'{uuid.uuid4().hex}.wav'
+            file_path = self.__audio_dir / f'{FileCache.get_hash(request.text)}.wav.tmp'
             self.get_logger().info(f"SR: {self.__sr} Channels: {self.__ch} FilePath: {file_path}")
               
-            with sf.SoundFile(file_path, mode="x", samplerate=self.__sr, channels=self.__ch) as f:
+            with sf.SoundFile(file_path, mode="w", samplerate=self.__sr, channels=self.__ch, format="wav") as f:
                 for chunk in chunks:
                     if goal_handle.is_cancel_requested:
                         self.get_logger().info("Canceling...")
@@ -88,9 +88,10 @@ class AudioCreationActionServer(Node):
                 return self.assemble_result(False, "FileIsEmpty", "", 0.0)
             
             self.get_logger().info("Finished Synthesis!")
+            os.replace(file_path, file_path.with_suffix(""))
             delete_file = False
             goal_handle.succeed()
-            return self.assemble_result(True, "Success", str(file_path), duration)
+            return self.assemble_result(True, "Success", str(file_path.with_suffix("")), duration)
 
         except Exception as e:
             self.get_logger().error(f"Error while executing callback: {e}")
