@@ -32,7 +32,7 @@ class AudioCreationActionServer(Node):
         
         # TODO write in constants or even as parameter?
         ros_home = Path(os.environ.get('ROS_HOME', Path.home() / '.ros'))
-        self.__audio_dir = ros_home / 'speaking_service' / 'audio_cache'
+        self.__audio_dir = ros_home / constants.PATH_TO_SOUND_LIB_ROS
         self.__audio_dir.mkdir(parents=True, exist_ok=True)
         self.__sr = constants.CURRENT_VOICE_SAMPLE_RATE
         self.__ch = constants.CURRENT_VOICE_CHANNELS

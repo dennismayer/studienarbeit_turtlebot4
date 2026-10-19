@@ -1,6 +1,5 @@
 # Goal
 string question_or_sentence
-string initial_prompt
 uint8 NO_RESPONSE = 0
 uint8 UPLOAD_RESPONSE = 1
 uint8 TRANSCRIBE_RESPONSE = 2

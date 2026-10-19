@@ -15,6 +15,9 @@ AUDIOLISTENERACTIONNAME="audioListener"
 AUDIOTRANSCRIBERNODENAME="AudioTranscriberWorker"
 AUDIOTRANSCRIBERACTIONNAME="audioTranscriber"
 
+AUDIOORCHESTRATORNODENAME="AudioOrchestrator"
+AUDIOORCHESTRATORACTIONNAME="speechRequest"
+
 VOICE_PATH = '/home/ubuntu/.venv/piper-voices/de_DE-thorsten-medium.onnx' # sample rate: 22050; channels: 1
 CURRENT_VOICE_CHANNELS = 1
 with open(VOICE_PATH + ".json") as f:
@@ -46,3 +49,6 @@ TRANSCRIPTION_COMPUTE_TYPE = "int8"
 
 TRANSCRIPTION_SR = 16000
 TRANSCRIPTION_CH = 1
+
+PATH_TO_SOUND_LIB_ROS = 'speaking_service/audio_cache'
+ACTION_TIMEOUT = 5.0
