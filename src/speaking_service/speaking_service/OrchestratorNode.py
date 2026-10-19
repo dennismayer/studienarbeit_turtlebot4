@@ -12,24 +12,69 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.utilities import try_shutdown
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rosidl_runtime_py import message_to_yaml
+from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 
 from action_msgs.msg import GoalStatus
 from speaking_interfaces.action import AudioCreation, AudioListener, AudioPlayer, AudioTranscriber, AudioOrchestrator
 from speaking_interfaces.msg import ListenerParams, TranscriberParams, UploadParams
 
-import constants
-from cache import FileCache
+from speaking_service.scripts.cache import FileCache
+from speaking_service.scripts.parameter_helper import get_param
 
 class SpeechOrchestratorNode(Node):
-    
+
     def __init__(self):
-        super().__init__(constants.AUDIOORCHESTRATORNODENAME)
-        
+        # defaults
+        node_name = "AudioOrchestrator"
+
+        super().__init__(node_name)
+
+        # load parameters
+        self.declare_parameters('', [
+            ("action_name", "speechRequest",
+             ParameterDescriptor(
+                 description="Name of the action server that clients send speech requests to",
+                 read_only=True,
+                 type=ParameterType.PARAMETER_STRING)),
+            ("creation_action", "/AudioWorkers/audioCreation",
+             ParameterDescriptor(
+                 description="Fully qualified name of the AudioCreationWorker action server",
+                 read_only=True,
+                 type=ParameterType.PARAMETER_STRING)),
+            ("player_action", "/AudioWorkers/audioPlayer",
+             ParameterDescriptor(
+                 description="Fully qualified name of the AudioPlayerWorker action server",
+                 read_only=True,
+                 type=ParameterType.PARAMETER_STRING)),
+            ("listener_action", "/AudioWorkers/audioListener",
+             ParameterDescriptor(
+                 description="Fully qualified name of the AudioListenerWorker action server",
+                 read_only=True,
+                 type=ParameterType.PARAMETER_STRING)),
+            ("transcriber_action", "/AudioWorkers/audioTranscriber",
+             ParameterDescriptor(
+                 description="Fully qualified name of the AudioTranscriberWorker action server",
+                 read_only=True,
+                 type=ParameterType.PARAMETER_STRING)),
+            ("action_timeout", 5.0,
+             ParameterDescriptor(
+                 description="Timeout in seconds for action calls",
+                 read_only=True,
+                 type=ParameterType.PARAMETER_DOUBLE)),
+            ("audio_cache_path", "speaking_service/audio_cache",
+             ParameterDescriptor(
+                 description="Audio cache directory, relative to $ROS_HOME",
+                 read_only=True,
+                 type=ParameterType.PARAMETER_STRING)),
+        ])
+
         # variables
         ros_home = Path(os.environ.get('ROS_HOME', Path.home() / '.ros'))
-        self.cache_dir = ros_home / constants.PATH_TO_SOUND_LIB_ROS
+        self.cache_dir = ros_home / get_param(self, "audio_cache_path", str)
         self.file_cache = FileCache(self.cache_dir, self.get_logger())
         self.lock_callback = Lock()
+
+        self.__action_timeout = get_param(self, "action_timeout", float)
         
         self.first_noise_detected = False
         self._current_goal_handle = None
@@ -40,26 +85,32 @@ class SpeechOrchestratorNode(Node):
         self.__audio_creation_action_client = ActionClient(
             self, 
             AudioCreation,
-            constants.NAMESPACEWORKERS + "/" + constants.AUDIOCREATIONACTIONNAME
+            get_param(self, "creation_action", str)
         )
         
         self.__audio_player_action_client = ActionClient(
             self, 
             AudioPlayer,
-            constants.NAMESPACEWORKERS + "/" + constants.AUDIOPLAYERACTIONNAME
+            get_param(self, "player_action", str)
         )
         
         self.__audio_listener_action_client = ActionClient(
             self, 
             AudioListener,
-            constants.NAMESPACEWORKERS + "/" + constants.AUDIOLISTENERACTIONNAME
+            get_param(self, "listener_action", str)
         )
 
         self.__audio_transcriber_action_client = ActionClient(
             self, 
             AudioTranscriber,
-            constants.NAMESPACEWORKERS + "/" + constants.AUDIOTRANSCRIBERACTIONNAME
+            get_param(self, "transcriber_action", str)
         )
+        
+        # check if clients are up
+        self.check_if_client_started(self.__audio_creation_action_client)
+        self.check_if_client_started(self.__audio_player_action_client)
+        self.check_if_client_started(self.__audio_listener_action_client)
+        self.check_if_client_started(self.__audio_transcriber_action_client)
         
         self.get_logger().info("Action Clients started!")
         
@@ -67,7 +118,7 @@ class SpeechOrchestratorNode(Node):
         self.__action_server = ActionServer(
             node=self, 
             action_type=AudioOrchestrator, 
-            action_name=constants.AUDIOORCHESTRATORACTIONNAME,
+            action_name=get_param(self, "action_name", str),
             execute_callback=self.execute_callback,
             cancel_callback=lambda _: CancelResponse.ACCEPT,
             goal_callback=self.goal_callback,
@@ -184,7 +235,7 @@ class SpeechOrchestratorNode(Node):
             goal_handle.publish_feedback(feedback)
                           
             response, error = await self._run_worker(
-                self.__audio_listener_action_client, goal_msg, self._feedback_listener_node
+                self.__audio_transcriber_action_client, goal_msg, self._feedback_transcriber_node
             )
             
             if response is None or response.status != GoalStatus.STATUS_SUCCEEDED:
@@ -224,6 +275,12 @@ class SpeechOrchestratorNode(Node):
             return None, "NoResult"
         return response, ""
     
+    def check_if_client_started(self, client: ActionClient):
+        if client.wait_for_server(timeout_sec=45.0):
+            return 
+        
+        raise RuntimeError(f"Action not reachable: {client._action_name}")
+    
     def _feedback_player_node(self, msg):
         feedback: AudioPlayer.Feedback = msg.feedback
         self.get_logger().info(f"Progress: {feedback.progress:.2f}")
@@ -237,6 +294,10 @@ class SpeechOrchestratorNode(Node):
             if self._current_goal_handle is not None:
                 self._current_goal_handle.publish_feedback(feedback_org)
             self.first_noise_detected = True
+            
+    def _feedback_transcriber_node(self, msg):
+        feedback: AudioTranscriber.Feedback = msg.feedback
+        self.get_logger().info(f"Progress: {feedback.progress:.2f}")
             
     def goal_callback(self, goal_request):
         if not self.lock_callback.acquire(blocking=False):
@@ -260,6 +321,7 @@ def main(args=None):
 
     orchestrator_node = None
     executor = None
+    exit_code = 0
 
     try:
         orchestrator_node = SpeechOrchestratorNode()
@@ -269,10 +331,12 @@ def main(args=None):
         executor.spin()
     except RuntimeError as e:
         print(e, file=sys.stderr)
+        exit_code = -1
     except KeyboardInterrupt:
-        print("\nKeyboard interrupt received, shutting down...")
+        print("\nKeyboard interrupt received, shutting down...", file=sys.stderr)
     except Exception as e:
-        print(f"Exception occurred in main thread: {e}")
+        print(f"Exception occurred in main thread: {e}", file=sys.stderr)
+        exit_code = -1
     finally:
         if executor is not None:
             executor.shutdown()
@@ -280,5 +344,7 @@ def main(args=None):
             orchestrator_node.destroy_node()
         try_shutdown()
 
+    return exit_code
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

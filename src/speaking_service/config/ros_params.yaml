@@ -1,0 +1,142 @@
+# Default parameters for the speaking_service nodes.
+#
+# Top-level keys are fully qualified node names (/<namespace>/<node_name>).
+# Node names and namespaces are not parameters: they are set in the launch
+# file and must match the keys below, otherwise the parameters are not applied.
+#   Workers namespace: /AudioWorkers
+#   Orchestrator:      no namespace
+
+# ---------------------------------------------------------------------------
+# Shared: values that must be identical across several nodes.
+# "/**" applies to every node; each node only picks up the ones it declares.
+# ---------------------------------------------------------------------------
+/**:
+  ros__parameters:
+    # Audio cache directory, relative to $ROS_HOME (default ~/.ros).
+    # Written by AudioCreationWorker, read by AudioOrchestrator.
+    audio_cache_path: "speaking_service/audio_cache"
+
+    # Recording cache directory, relative to $ROS_HOME (default ~/.ros).
+    # Written by AudioListenerWorker. AudioTranscriberWorker only deletes
+    # files after transcription if they lie inside this directory.
+    recorded_audio_cache_path: "speaking_service/recorded_audio_cache"
+
+    # Native format of the Piper voice model (see voice_model_path).
+    # AudioCreationWorker writes files in this format, AudioPlayerWorker
+    # expects it. Change both when the voice model changes.
+    voice_sample_rate: 22050
+    voice_channels: 1
+
+    # Format of recorded speech. AudioListenerWorker records in this format,
+    # AudioTranscriberWorker rejects files that don't match it.
+    recording_sample_rate: 16000
+    recording_channels: 1
+
+# ---------------------------------------------------------------------------
+# AudioCreationWorker: text-to-speech with Piper
+# ---------------------------------------------------------------------------
+/AudioWorkers/AudioCreationWorker:
+  ros__parameters:
+    # Action server name, resolved inside the /AudioWorkers namespace.
+    action_name: "audioCreation"
+
+    # Absolute path to the Piper voice model (.onnx).
+    voice_model_path: "/home/ubuntu/.venv/piper-voices/de_DE-thorsten-medium.onnx"
+
+    # Piper synthesis volume multiplier (1.0 = unchanged).
+    volume: 1.0
+
+# ---------------------------------------------------------------------------
+# AudioPlayerWorker: plays synthesized audio on the speaker
+# ---------------------------------------------------------------------------
+/AudioWorkers/AudioPlayerWorker:
+  ros__parameters:
+    # Action server name, resolved inside the /AudioWorkers namespace.
+    action_name: "audioPlayer"
+
+    # Output device name (substring match in sounddevice).
+    audio_device: "Jabra"
+
+    # Playback format. Voice audio is upsampled to this because the
+    # Jabra device does not accept the voice's native format.
+    output_sample_rate: 44100
+    output_channels: 2
+
+    # Length of one playback chunk in seconds.
+    chunk_duration: 0.1
+
+# ---------------------------------------------------------------------------
+# AudioListenerWorker: records speech from the microphone
+# ---------------------------------------------------------------------------
+/AudioWorkers/AudioListenerWorker:
+  ros__parameters:
+    # Action server name, resolved inside the /AudioWorkers namespace.
+    action_name: "audioListener"
+
+    # Input device name (substring match in sounddevice).
+    audio_device: "Jabra"
+
+    # Frames per input block delivered by the audio stream callback.
+    input_blocksize: 1024
+
+    # RMS level below which a block counts as silence.
+    silence_threshold: 0.01
+
+    # Seconds of audio kept from before speech was detected, so the
+    # start of the first word isn't cut off.
+    pre_start_recording_time: 0.3
+
+# ---------------------------------------------------------------------------
+# AudioTranscriberWorker: speech-to-text with faster-whisper
+# ---------------------------------------------------------------------------
+/AudioWorkers/AudioTranscriberWorker:
+  ros__parameters:
+    # Action server name, resolved inside the /AudioWorkers namespace.
+    action_name: "audioTranscriber"
+
+    # Whisper model size (tiny, base, small, medium, large-v3, ...).
+    model_size: "tiny"
+
+    # Inference device ("cpu" or "cuda").
+    device: "cpu"
+
+    # Model weight quantization ("int8", "float16", "float32", ...).
+    compute_type: "int8"
+
+    # Number of beams for beam search decoding.
+    beam_size: 5
+
+    # Sampling temperatures, tried in order when decoding fails.
+    temperature: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+
+    # Feed the previous segment's text as a prompt for the next one.
+    condition_on_previous_text: false
+
+    # Drop non-speech parts with the Silero VAD before transcribing.
+    vad_filter: true
+
+    # VAD options. Other keys keep the faster-whisper defaults.
+    vad_parameters:
+      # Minimum silence in ms that splits speech into separate segments.
+      min_silence_duration_ms: 1000
+
+    # A segment is dropped if no_speech_prob > this AND avg_logprob < -1.0.
+    no_speech_threshold: 0.6
+
+# ---------------------------------------------------------------------------
+# AudioOrchestrator: handles speech requests by chaining the workers
+# ---------------------------------------------------------------------------
+/AudioOrchestrator:
+  ros__parameters:
+    # Name of the action server that clients send speech requests to.
+    action_name: "speechRequest"
+
+    # Fully qualified names of the worker action servers.
+    # Must match each worker's namespace + action_name.
+    creation_action: "/AudioWorkers/audioCreation"
+    player_action: "/AudioWorkers/audioPlayer"
+    listener_action: "/AudioWorkers/audioListener"
+    transcriber_action: "/AudioWorkers/audioTranscriber"
+
+    # Timeout in seconds for action calls.
+    action_timeout: 5.0

@@ -16,24 +16,75 @@ from rclpy.node import Node
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.utilities import try_shutdown
+from rcl_interfaces.msg import ParameterDescriptor, FloatingPointRange, ParameterType
 
 from speaking_interfaces.action import AudioListener
 
-import constants
+from speaking_service.scripts.parameter_helper import get_param
 
 class AudioListenerActionServer(Node):
     
     def __init__(self):
-        super().__init__(constants.AUDIOLISTENERNODENAME, namespace=constants.NAMESPACEWORKERS)
+        # defaults
+        node_name = "AudioListenerWorker"
+        node_namespace = "/AudioWorkers"
         
-        self.__sr = constants.INPUT_SAMPLE_RATE
-        self.__bs = constants.INPUT_BLOCKSIZE
-        self.__ch = constants.INPUT_CHANNELS
+        super().__init__(node_name, namespace=node_namespace)
+
+        # load parameters
+        self.declare_parameters('', [
+            ("action_name", "audioListener",
+             ParameterDescriptor(
+                 description="Action server name, resolved inside the node namespace",
+                 read_only=True,
+                 type=ParameterType.PARAMETER_STRING)),
+            ("audio_device", "Jabra",
+             ParameterDescriptor(
+                 description="Input device name (substring match in sounddevice)",
+                 read_only=True,
+                 type=ParameterType.PARAMETER_STRING)),
+            ("input_blocksize", 1024,
+             ParameterDescriptor(
+                 description="Frames per input block delivered by the audio stream callback",
+                 read_only=True,
+                 type=ParameterType.PARAMETER_INTEGER)),
+            ("silence_threshold", 0.01,
+             ParameterDescriptor(
+                 description="RMS level below which a block counts as silence",
+                 read_only=True,
+                 type=ParameterType.PARAMETER_DOUBLE,
+                 floating_point_range=[FloatingPointRange(from_value=0.0, to_value=1.0)])),
+            ("pre_start_recording_time", 0.3,
+             ParameterDescriptor(
+                 description="Seconds of audio kept from before speech was detected",
+                 read_only=True,
+                 type=ParameterType.PARAMETER_DOUBLE)),
+            ("recording_sample_rate", 16000,
+             ParameterDescriptor(
+                 description="Sample rate of the recorded audio",
+                 read_only=True,
+                 type=ParameterType.PARAMETER_INTEGER)),
+            ("recording_channels", 1,
+             ParameterDescriptor(
+                 description="Channel count of the recorded audio",
+                 read_only=True,
+                 type=ParameterType.PARAMETER_INTEGER)),
+            ("recorded_audio_cache_path", "speaking_service/recorded_audio_cache",
+             ParameterDescriptor(
+                 description="Recording cache directory, relative to $ROS_HOME",
+                 read_only=True,
+                 type=ParameterType.PARAMETER_STRING)),
+        ])
+
+        self.__sr = get_param(self, "recording_sample_rate", int)
+        self.__bs = get_param(self, "input_blocksize", int)
+        self.__ch = get_param(self, "recording_channels", int)
+        self.__silent_threshold = get_param(self, "silence_threshold", float)
         self.audio_queue = queue.Queue()
         self.lock_listener_node = Lock()
         self.preroll_lock = Lock()
         self.recording_event = Event()
-        self.preroll = deque(maxlen=int(constants.PRE_START_RECORDING_TIME * self.__sr/self.__bs))
+        self.preroll = deque(maxlen=int(get_param(self, "pre_start_recording_time", float) * self.__sr/self.__bs))
         
         
         self.TIME_PER_BLOCK = self.__bs/self.__sr
@@ -53,20 +104,22 @@ class AudioListenerActionServer(Node):
             blocksize=self.__bs,
             latency="high",
             channels=self.__ch,
-            device=constants.AUDIO_DEVICE,
+            device=get_param(self, "audio_device", str),
             callback=callback
         )
         
         self.stream.start()
         
         ros_home = Path(os.environ.get('ROS_HOME', Path.home() / '.ros'))
-        self.__audio_dir = ros_home / 'speaking_service' / 'recorded_audio_cache'
+        self.__audio_dir = ros_home / get_param(self, "recorded_audio_cache_path", str)
+        self.__audio_dir.mkdir(parents=True, exist_ok=True)
+        
         
         self.get_logger().info("Starting Server ...")
         self.__action_server = ActionServer(
             node=self, 
             action_type=AudioListener, 
-            action_name=constants.AUDIOLISTENERACTIONNAME,
+            action_name=get_param(self, "action_name", str),
             execute_callback=self.execute_callback,
             cancel_callback=lambda _: CancelResponse.ACCEPT,
             goal_callback=self.goal_callback,
@@ -190,7 +243,7 @@ class AudioListenerActionServer(Node):
         
     def block_silent(self, block):
         rms = np.sqrt(np.mean(block ** 2))
-        return rms < constants.SILENCE_THRESHOLD
+        return rms < self.__silent_threshold
     
     def goal_callback(self, goal_request):
         if not self.lock_listener_node.acquire(blocking=False):
@@ -222,6 +275,7 @@ def main(args=None):
 
     audio_listener_action_server = None
     executor = None
+    exit_code = 0
 
     try:
         audio_listener_action_server = AudioListenerActionServer()
@@ -230,10 +284,12 @@ def main(args=None):
         executor.spin()
     except RuntimeError as e:
         print(e, file=sys.stderr)
+        exit_code = -1
     except KeyboardInterrupt:
-        print("\nKeyboard interrupt received, shutting down...")
+        print("\nKeyboard interrupt received, shutting down...", file=sys.stderr)
     except Exception as e:
-        print(f"Exception occurred in main thread: {e}")
+        print(f"Exception occurred in main thread: {e}", file=sys.stderr)
+        exit_code = -1
     finally:
         if executor is not None:
             executor.shutdown()
@@ -241,5 +297,7 @@ def main(args=None):
             audio_listener_action_server.destroy_node()
         try_shutdown()
 
+    return exit_code
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
