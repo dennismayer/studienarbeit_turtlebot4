@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 import os
 from threading import Lock
-
+import numpy as np
 
 import rclpy
 from rclpy.action.client import ActionClient, ClientGoalHandle
@@ -71,6 +71,7 @@ class SpeechOrchestratorNode(Node):
         # variables
         ros_home = Path(os.environ.get('ROS_HOME', Path.home() / '.ros'))
         self.cache_dir = ros_home / get_param(self, "audio_cache_path", str)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.file_cache = FileCache(self.cache_dir, self.get_logger())
         self.lock_callback = Lock()
 
@@ -78,6 +79,7 @@ class SpeechOrchestratorNode(Node):
         
         self.first_noise_detected = False
         self._current_goal_handle = None
+        self._active_worker_handle = None
         
         
         self.get_logger().info("Starting Action Clients ...")
@@ -120,16 +122,18 @@ class SpeechOrchestratorNode(Node):
             action_type=AudioOrchestrator, 
             action_name=get_param(self, "action_name", str),
             execute_callback=self.execute_callback,
-            cancel_callback=lambda _: CancelResponse.ACCEPT,
+            cancel_callback=self.cancel_callback,
             goal_callback=self.goal_callback,
             callback_group=MutuallyExclusiveCallbackGroup()
         )
         self.get_logger().info("Started Server!")
         
     async def execute_callback(self, goal_handle: ServerGoalHandle) -> AudioOrchestrator.Result:
+        # recording handed over by the listener; the orchestrator owns it and deletes it in finally
+        recording_path: Path | None = None
         try:
-            self.get_logger().info("Recieved goal...")
-            self.get_logger().debug(f"Recieved goal:\n{message_to_yaml(goal_handle.request)}")
+            self.get_logger().info("Received goal...")
+            self.get_logger().debug(f"Received goal:\n{message_to_yaml(goal_handle.request)}")
             
             request: AudioOrchestrator.Goal = goal_handle.request
             
@@ -142,38 +146,49 @@ class SpeechOrchestratorNode(Node):
                 self.get_logger().debug("Couldn't find file; generating...")
                 feedback.state = AudioOrchestrator.Feedback.CREATING_AUDIO
                 goal_handle.publish_feedback(feedback)
+                if goal_handle.is_cancel_requested:
+                    return self._handle_cancel_callback(goal_handle)
                 
                 goal_msg = AudioCreation.Goal()
                 goal_msg.text = request.question_or_sentence
                 
                 response, error = await self._run_worker(
-                    self.__audio_creation_action_client, goal_msg
+                    self.__audio_creation_action_client, goal_msg, timeout_sec=45.0
                 )
                 
                 if response is None or response.status != GoalStatus.STATUS_SUCCEEDED:
+                    if response is not None and response.status == GoalStatus.STATUS_CANCELED:
+                        return self._handle_cancel_callback(goal_handle)
                     return self._handle_error_callback(goal_handle, f"Failed to synthesis: {error}")
                 
                 creation_result: AudioCreation.Result = response.result
 
                 file_path_duration_object = {"file_path": creation_result.file_path, "duration": creation_result.duration}
                 try:
-                    self.file_cache.store(file_path_duration_object["file_path"], file_path_duration_object["duration"])
+                    self.file_cache.store(os.path.basename(file_path_duration_object["file_path"]), file_path_duration_object["duration"])
                 except Exception as e:
                     return self._handle_error_callback(goal_handle, f"Failed to synthesis cache store: {e}")
+                self.get_logger().info("Synthesising finished!")
+            else:
+                self.get_logger().info("File found in cache!")
             
             # Synthesising data
-            self.get_logger().info("Synthesising finished!\nStart playing...")
+            self.get_logger().info("Start playing...")
             goal_msg = AudioPlayer.Goal()
             goal_msg.file_path = file_path_duration_object["file_path"]
             
             feedback.state = AudioOrchestrator.Feedback.PLAYING
             goal_handle.publish_feedback(feedback)
+            if goal_handle.is_cancel_requested:
+                return self._handle_cancel_callback(goal_handle)
             
             response, error = await self._run_worker(
-                self.__audio_player_action_client, goal_msg, self._feedback_player_node
+                self.__audio_player_action_client, goal_msg, self._feedback_player_node, timeout_sec=45.0
             )
             
             if response is None or response.status != GoalStatus.STATUS_SUCCEEDED:
+                if response is not None and response.status == GoalStatus.STATUS_CANCELED:
+                    return self._handle_cancel_callback(goal_handle)
                 return self._handle_error_callback(goal_handle, f"Failed to play audio: {error}")
             
             self.get_logger().info("Playback finished!")
@@ -192,21 +207,29 @@ class SpeechOrchestratorNode(Node):
             
             feedback.state = AudioOrchestrator.Feedback.WAITING_FOR_SPEECH
             goal_handle.publish_feedback(feedback)
+            if goal_handle.is_cancel_requested:
+                return self._handle_cancel_callback(goal_handle)
             
             self._current_goal_handle = goal_handle
             response, error = await self._run_worker(
-                self.__audio_listener_action_client, goal_msg, self._feedback_listener_node
+                self.__audio_listener_action_client, goal_msg, self._feedback_listener_node, timeout_sec=45.0
             )
             self._current_goal_handle = None
             self.first_noise_detected = False
-            
+
+            # the listener also returns a file on Canceled/TotalTimeout if speech was heard
+            if response is not None and response.result.file_path:
+                recording_path = Path(response.result.file_path)
+
             if response is None or response.status != GoalStatus.STATUS_SUCCEEDED:
+                if response is not None and response.status == GoalStatus.STATUS_CANCELED:
+                    return self._handle_cancel_callback(goal_handle)
+
                 return self._handle_error_callback(goal_handle, f"Failed to record audio: {error}")
-            
+
             listener_result: AudioListener.Result = response.result
-            
-            if not os.path.exists(Path(listener_result.file_path)) or listener_result.duration == 0.0:
-                Path(listener_result.file_path).unlink(missing_ok=True)
+
+            if recording_path is None or not recording_path.is_file() or listener_result.duration == 0.0:
                 return self._handle_error_callback(goal_handle, f"Recording doesn't exists or has duration 0!")
             
             self.get_logger().info("Finished Recording!")
@@ -216,9 +239,11 @@ class SpeechOrchestratorNode(Node):
                 self.get_logger().info("Uploading data...")
                 feedback.state = AudioOrchestrator.Feedback.UPLOADING
                 goal_handle.publish_feedback(feedback)
-                # TODO Upload Node adding 
-                Path(listener_result.file_path).unlink(missing_ok=True)
-                
+                if goal_handle.is_cancel_requested:
+                    return self._handle_cancel_callback(goal_handle)
+                # TODO Upload Node adding
+
+
                 self.get_logger().info("Finished Uploading!")
                 goal_handle.succeed()
                 return self.assemble_result(True, "UploadResponse", "")
@@ -233,17 +258,23 @@ class SpeechOrchestratorNode(Node):
             
             feedback.state = AudioOrchestrator.Feedback.TRANSCRIBING
             goal_handle.publish_feedback(feedback)
+            if goal_handle.is_cancel_requested:
+                return self._handle_cancel_callback(goal_handle)
                           
             response, error = await self._run_worker(
-                self.__audio_transcriber_action_client, goal_msg, self._feedback_transcriber_node
+                self.__audio_transcriber_action_client, goal_msg, self._feedback_transcriber_node, timeout_sec=45.0
             )
             
             if response is None or response.status != GoalStatus.STATUS_SUCCEEDED:
-                return self._handle_error_callback(goal_handle, f"Failed to record audio: {error}")
+                if response is not None and response.status == GoalStatus.STATUS_CANCELED:
+                    return self._handle_cancel_callback(goal_handle)
+                return self._handle_error_callback(goal_handle, f"Failed to transcribe audio: {error}")
             
             transcriber_result: AudioTranscriber.Result = response.result
             
-            if transcriber_result.avg_logprob < request.transcriber_parameters.min_avg_logprob or transcriber_result.no_speech_prob > request.transcriber_parameters.max_no_speech_prob:
+            if (np.isnan(transcriber_result.avg_logprob) or np.isnan(transcriber_result.no_speech_prob) or
+                transcriber_result.avg_logprob < request.transcriber_parameters.min_avg_logprob or 
+                transcriber_result.no_speech_prob > request.transcriber_parameters.max_no_speech_prob):
                 self.get_logger().info("Transcription with less accuracy")
                 self.get_logger().info(f"avg_logprob: min: {request.transcriber_parameters.min_avg_logprob}; actually: {transcriber_result.avg_logprob}")
                 self.get_logger().info(f"no_speech_prob: max{request.transcriber_parameters.max_no_speech_prob}; actually: {transcriber_result.no_speech_prob}")
@@ -253,28 +284,45 @@ class SpeechOrchestratorNode(Node):
             return self.assemble_result(True, "TranscribeResponse", transcriber_result.text)
         
         except Exception as e:
-            return self.assemble_result(False, f"An Unknown Error accurred: {e}", "")
+            return self._handle_error_callback(goal_handle, f"An Unknown Error occurred: {e}")
             
         finally:
+            # covers every exit: success, error, cancel and exceptions
+            # (after a successful transcription the transcriber already deleted it, so this is a no-op)
+            if recording_path is not None:
+                try:
+                    recording_path.unlink(missing_ok=True)
+                except OSError as e:
+                    self.get_logger().warning(f"Could not delete recording {recording_path}: {e}")
             self.lock_callback.release()
-    
-    async def _run_worker(self, client: ActionClient, goal, feedback_callback=None):
+
+    async def _run_worker(self, client: ActionClient, goal, feedback_callback=None, *, timeout_sec: float):
         if not client.server_is_ready():
             return None, "ServerNotAvailable"
 
-        worker_handle: ClientGoalHandle | None = await client.send_goal_async(
-            goal, feedback_callback=feedback_callback)
+        # goal acceptance should be quick, so the short action_timeout fits here
+        send_future = client.send_goal_async(goal, feedback_callback=feedback_callback)
+        worker_handle: ClientGoalHandle | None = await self._await_with_timeout(send_future, self.__action_timeout)
+        if send_future.cancelled():
+            return None, "GoalResponseTimeout"
         if worker_handle is None or not worker_handle.accepted:
             return None, "GoalRejected"
 
         self._active_worker_handle = worker_handle
-        response = await worker_handle.get_result_async()
-        self._active_worker_handle = None
+        try:
+            result_future = worker_handle.get_result_async()
+            response = await self._await_with_timeout(result_future, timeout_sec)
+            if result_future.cancelled():
+                # not awaited: a dead worker would never answer the cancel request either
+                worker_handle.cancel_goal_async()
+                return None, "ResultTimeout"
+        finally:
+            self._active_worker_handle = None
 
         if response is None:
             return None, "NoResult"
         return response, ""
-    
+
     def check_if_client_started(self, client: ActionClient):
         if client.wait_for_server(timeout_sec=45.0):
             return 
@@ -304,6 +352,11 @@ class SpeechOrchestratorNode(Node):
             return GoalResponse.REJECT
         return GoalResponse.ACCEPT
     
+    def cancel_callback(self, cancel_request):
+        if self._active_worker_handle is not None:
+            self._active_worker_handle.cancel_goal_async()
+        return CancelResponse.ACCEPT
+    
     def assemble_result(self, success: bool, message: str, transcribed_text: str):
         result = AudioOrchestrator.Result()
         result.success = success
@@ -315,6 +368,25 @@ class SpeechOrchestratorNode(Node):
         self.get_logger().error(error_msg)
         goal_handle.abort()
         return self.assemble_result(False, error_msg, "")
+    
+    def _handle_cancel_callback(self, goal_handle: ServerGoalHandle):
+        self.get_logger().info("Canceling...")
+        goal_handle.canceled()
+        return self.assemble_result(False, "Canceled", "")
+    
+    async def _await_with_timeout(self, future, timeout_sec: float):
+        def on_timeout():
+            timer.cancel()
+            future.cancel()          # wakes up the await below with None
+
+        timer = self.create_timer(timeout_sec, on_timeout)
+        try:
+            return await future
+        finally:
+            timer.cancel()
+            self.destroy_timer(timer)
+
+        
 
 def main(args=None):
     rclpy.init(args=args)
