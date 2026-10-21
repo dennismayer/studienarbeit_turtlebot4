@@ -84,7 +84,7 @@
 
     # Seconds of audio kept from before speech was detected, so the
     # start of the first word isn't cut off.
-    pre_start_recording_time: 0.3
+    pre_start_recording_time: 0.5
 
 # ---------------------------------------------------------------------------
 # AudioTranscriberWorker: speech-to-text with faster-whisper
