@@ -49,6 +49,13 @@ These two packages are agent-owned (see the exception in `AGENTS.md`).
 
 ### Done
 - Grilling, glossary, ADR 0001.
+- Implemented test-first and mutation-checked (commits af7a08c..71f960b): `driving_interfaces`; `driving_service` with `visitor_detector.py` (pure logic), `navigator_node.py`, `visitor_detector_node.py`, `run_node.py`, `config/ros_params.yaml`, `launch/driving_service.launch.py`.
+- Mutation survivor (equivalent, kept): the explicit "rejected goal" branch in `VisitorDetectorNode._on_goal_response`; rclpy also answers a result request for a rejected goal, so the outcome is the same, but relying on that is fragile.
 
 ### Next steps
-- Implement test-first, QA, code review.
+- QA, then code review.
+
+### How to run
+- Gate: `colcon build --packages-select driving_interfaces driving_service && colcon test --packages-select driving_service && colcon test-result --test-result-base build/driving_service`
+- ROS tests run in ROS domain 87 with unique names, so they never reach the robot's real Nav2.
+- Launch: `ros2 launch driving_service driving_service.launch.py`
