@@ -1,0 +1,16 @@
+# Drives the robot to a pose on the map with Nav2, retrying when Nav2 fails.
+# Only one goal at a time, others are rejected.
+
+# Goal
+float64 x                       # map frame, meters
+float64 y                       # map frame, meters
+float64 yaw                     # heading at the goal in radians, 0 = map x axis, counter-clockwise positive
+---
+# Result
+bool success
+string message                  # "Reached", "Canceled", "Nav2Unavailable" or the failure description
+uint8 attempts                  # Nav2 attempts used, 0 if Nav2 was never reached
+---
+# Feedback
+uint8 attempt                   # current attempt, starts at 1
+float32 distance_remaining      # meters left on the current path, from Nav2

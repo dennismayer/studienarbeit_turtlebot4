@@ -1,0 +1,14 @@
+# Sent by the visitor detector when a visitor stands in front of the robot.
+# The server runs the whole visit and returns once it is over. The detector
+# sends no new goal while one is open and never cancels it.
+
+# Goal
+float32 distance                # meters from the LiDAR to the visitor cluster
+float32 angle                   # radians in the LiDAR frame, 0 = straight ahead, positive = left
+float32 confidence              # 0..1, how person-like the cluster is
+---
+# Result
+bool success
+string message                  # status or error description
+---
+# No Feedback
