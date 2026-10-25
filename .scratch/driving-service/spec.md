@@ -20,7 +20,7 @@ These two packages are agent-owned (see the exception in `AGENTS.md`).
    - Result: `bool success`, `string message` (`"Reached"`, `"Canceled"`, `"Nav2Unavailable"` or the failure description), `uint8 attempts`.
    - Feedback: `uint8 attempt` (starts at 1), `float32 distance_remaining` (m, from Nav2).
 5. `action/VisitorDetected.action`:
-   - Goal: `float32 distance` (m, LiDAR to visitor cluster), `float32 angle` (rad, LiDAR frame, 0 = ahead, left positive), `float32 confidence` (0..1).
+   - Goal: `float32 distance` (m, LiDAR to visitor cluster), `float32 angle` (rad, relative to the robot heading, 0 = ahead, left positive), `float32 confidence` (0..1).
    - Result: `bool success`, `string message`.
    - No feedback.
 
@@ -33,7 +33,7 @@ These two packages are agent-owned (see the exception in `AGENTS.md`).
 11. The node does not set the initial pose. Localization is done outside (RViz 2D Pose Estimate or AMCL params); goals fail with a clear message until then.
 
 ### Visitor detector node (driving_service) — VisitorDetected client
-12. Continuously clusters `/scan` (best-effort sensor QoS): valid ranges only, front window ±`detection_angle_range`/2, clusters by gap between neighboring points, min points per cluster.
+12. Continuously clusters `/scan` (best-effort sensor QoS): valid ranges only, front window ±`detection_angle_range`/2 around `lidar_front_angle` (the scan angle that points straight ahead; default −π/2 because the TurtleBot4 URDF mounts the LiDAR rotated +90°), clusters by gap between neighboring points, min points per cluster.
 13. A cluster is a visitor candidate when its mean distance is within [`detection_distance_min`, `detection_distance_max`], its width is within [`person_width_min`, `person_width_max`], and its confidence (weighted width/distance/cluster-size score) is ≥ `min_confidence`.
 14. Stable detection: at least `stability_threshold - 2` of the last `stability_threshold` processed scans had a candidate. `lidar_frame_skip_rate` thins processing.
 15. On a stable detection while armed, it sends one `VisitorDetected` goal with the best candidate's distance, angle and confidence, and waits for the result. No new goal while one is open; the detector never cancels it.

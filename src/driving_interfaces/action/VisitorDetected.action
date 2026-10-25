@@ -4,7 +4,7 @@
 
 # Goal
 float32 distance                # meters from the LiDAR to the visitor cluster
-float32 angle                   # radians in the LiDAR frame, 0 = straight ahead, positive = left
+float32 angle                   # radians relative to the robot heading, 0 = straight ahead, positive = left
 float32 confidence              # 0..1, how person-like the cluster is
 ---
 # Result
