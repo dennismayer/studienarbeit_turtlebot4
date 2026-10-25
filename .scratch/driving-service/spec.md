@@ -64,8 +64,11 @@ These two packages are agent-owned (see the exception in `AGENTS.md`).
 - QA report 1 (at 60dac1c): Fails — see `qa-report-1.md`. Fails N11, N15, V9, X1a, N9, V13 and concern N13 lead to requirements 18–22.
 - V1 (detector on the real LiDAR) blocked: the LiDAR stopped after a power loss; the user restarts it (decision 2026-10-25).
 
+- Requirements 18–22 implemented test-first and mutation-checked (8a2ba6c, 9524dd2). Mutation survivor (kept): the "already given up on this visit" guard in `VisitorDetectorNode._on_visit_over`; no fake can deliver a late result from a vanished receptionist.
+- Test-harness lessons (rclpy Jazzy): a node added to an already spinning executor is not always picked up; destroying an action server inside a spinning executor can kill the spin thread; `destroy_node()` leaves action servers alive. Fakes now run in executors of their own and stop like a dying process.
+
 ### Next steps
-- Implement 18–22 test-first, follow-up QA, then code review.
+- Follow-up QA (scoped to 60dac1c..HEAD), then code review.
 
 ### How to run
 - Gate: `colcon build --packages-select driving_interfaces driving_service && colcon test --packages-select driving_service && colcon test-result --test-result-base build/driving_service`
