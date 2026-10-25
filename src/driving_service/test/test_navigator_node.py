@@ -17,7 +17,9 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 
-# a domain of its own, so no test can ever reach the robot's real Nav2
+# A domain of its own and no discovery server, so no test can ever reach the
+# robot's real Nav2: the robot's Fast DDS discovery server (ROS_DISCOVERY_SERVER) connects
+# participants across domain IDs, so the domain ID alone does not isolate.
 TEST_DOMAIN_ID = 87
 TIMEOUT = 10.0
 
@@ -144,7 +146,9 @@ def wait_until(condition, timeout=2.0):
 
 
 @pytest.fixture(autouse=True)
-def ros():
+def ros(monkeypatch):
+    monkeypatch.delenv('ROS_DISCOVERY_SERVER', raising=False)
+    monkeypatch.setenv('ROS_AUTOMATIC_DISCOVERY_RANGE', 'LOCALHOST')
     rclpy.init(domain_id=TEST_DOMAIN_ID)
     yield
     rclpy.try_shutdown()

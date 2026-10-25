@@ -57,5 +57,5 @@ These two packages are agent-owned (see the exception in `AGENTS.md`).
 
 ### How to run
 - Gate: `colcon build --packages-select driving_interfaces driving_service && colcon test --packages-select driving_service && colcon test-result --test-result-base build/driving_service`
-- ROS tests run in ROS domain 87 with unique names, so they never reach the robot's real Nav2.
+- ROS tests run in ROS domain 87 with the discovery server disabled (`ROS_DISCOVERY_SERVER` unset, `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`) and unique names, so they never reach the robot's real Nav2. The domain ID alone does not isolate on this robot: its Fast DDS discovery server (`127.0.0.1:11811`) connects participants across domains (verified 2026-10-25). Do the same for any manual experiment: `env -u ROS_DISCOVERY_SERVER ROS_DOMAIN_ID=88 ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST ...`.
 - Launch: `ros2 launch driving_service driving_service.launch.py`

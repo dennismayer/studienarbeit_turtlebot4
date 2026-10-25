@@ -17,7 +17,9 @@ from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 
-# a domain of its own, so no test can ever reach the robot's real nodes
+# A domain of its own and no discovery server, so no test can ever reach the
+# robot's real nodes: the robot's Fast DDS discovery server (ROS_DISCOVERY_SERVER) connects
+# participants across domain IDs, so the domain ID alone does not isolate.
 TEST_DOMAIN_ID = 87
 TIMEOUT = 10.0
 NUM_POINTS = 720
@@ -138,7 +140,9 @@ def wait_until(condition, timeout=TIMEOUT):
 
 
 @pytest.fixture(autouse=True)
-def ros():
+def ros(monkeypatch):
+    monkeypatch.delenv('ROS_DISCOVERY_SERVER', raising=False)
+    monkeypatch.setenv('ROS_AUTOMATIC_DISCOVERY_RANGE', 'LOCALHOST')
     rclpy.init(domain_id=TEST_DOMAIN_ID)
     yield
     rclpy.try_shutdown()
