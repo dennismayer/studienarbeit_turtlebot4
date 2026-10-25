@@ -29,6 +29,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'navigatorNode = driving_service.navigator_node:main',
+            'visitorDetectorNode = driving_service.visitor_detector_node:main',
         ],
     },
 )
