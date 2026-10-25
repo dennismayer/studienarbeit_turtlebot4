@@ -40,6 +40,24 @@ class DetectionParams:
     frame_skip_rate: int
     lidar_front_angle: float
 
+    def __post_init__(self):
+        """Reject values the detector cannot work with."""
+        checks = [
+            (self.min_distance < self.max_distance,
+             'detection_distance_min must be < detection_distance_max'),
+            (0.0 < self.angle_range <= 360.0, 'detection_angle_range must be within (0, 360]'),
+            (self.person_width_min < self.person_width_max,
+             'person_width_min must be < person_width_max'),
+            (self.stability_threshold >= 3, 'stability_threshold must be >= 3'),
+            (self.visitor_timeout >= 0.0, 'visitor_timeout must be >= 0'),
+            (self.cooldown_period >= 0.0, 'cooldown_period must be >= 0'),
+            (0.0 <= self.min_confidence <= 1.0, 'min_confidence must be within 0..1'),
+            (self.frame_skip_rate >= 1, 'lidar_frame_skip_rate must be >= 1'),
+        ]
+        for ok, message in checks:
+            if not ok:
+                raise ValueError(message)
+
 
 @dataclass(frozen=True)
 class Visitor:

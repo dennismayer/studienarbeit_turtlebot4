@@ -9,7 +9,7 @@ from driving_interfaces.action import VisitorDetected
 from driving_service.visitor_detector_node import VisitorDetectorNode
 import pytest
 import rclpy
-from rclpy.action import ActionServer, GoalResponse
+from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -57,20 +57,55 @@ class FakeReceptionist(Node):
         self.goals = []
         self.offered = 0
         self.accept = accept
+        self.answer_delays = []  # per goal; a goal answered late waits to be canceled
+        self.canceled = threading.Event()
+        self._answered_late = set()
         self._end_visit = threading.Event()
+        self._stopped = threading.Event()
         self._server = ActionServer(
             self, VisitorDetected, action_name,
             goal_callback=self._on_goal,
+            cancel_callback=lambda _: CancelResponse.ACCEPT,
             execute_callback=self._execute,
             callback_group=ReentrantCallbackGroup())
 
-    def _on_goal(self, _goal):
+    def spin_in_background(self):
+        """Spin in an executor of its own, so stop() can end it like a process."""
+        self._executor = MultiThreadedExecutor()
+        self._executor.add_node(self)
+        threading.Thread(target=self._executor.spin, daemon=True).start()
+        return self
+
+    def stop(self):
+        """Vanish like a crashed or Ctrl-C'd main loop: the open visit never ends."""
+        if self._stopped.is_set():
+            return
+        # destroying the action server inside a spinning executor can kill its spin
+        # thread, so end the executor first, then the node, like a dying process
+        self._stopped.set()
+        self._executor.shutdown()
+        self._server.destroy()  # destroy_node() leaves action servers alive
+        self.destroy_node()
+
+    def _on_goal(self, goal):
         self.offered += 1
+        if self.answer_delays:
+            # rclpy hands goal_callback and execute the same request object
+            self._answered_late.add(id(goal))
+            time.sleep(self.answer_delays.pop(0))
         return GoalResponse.ACCEPT if self.accept else GoalResponse.REJECT
 
     def _execute(self, goal_handle):
+        if id(goal_handle.request) in self._answered_late:
+            while not goal_handle.is_cancel_requested and self.context.ok():
+                time.sleep(0.01)
+            self.canceled.set()
+            goal_handle.canceled()
+            return VisitorDetected.Result()
         self.goals.append(goal_handle.request)
         while not self._end_visit.wait(0.01):
+            if self._stopped.is_set():
+                return VisitorDetected.Result()
             if not self.context.ok():
                 break
         self._end_visit.clear()
@@ -100,6 +135,7 @@ class Harness:
         self.detector = VisitorDetectorNode(parameter_overrides=[
             Parameter(name, value=value) for name, value in overrides.items()])
         self.receptionist = None
+        self._receptionists = []
         self._action_name = action_name
         self.publisher_node = Node('test_scan_' + uuid.uuid4().hex[:8])
         self.publisher = self.publisher_node.create_publisher(
@@ -115,8 +151,11 @@ class Harness:
         wait_until(lambda: self.publisher.get_subscription_count() > 0)
 
     def start_receptionist(self, accept=True):
-        self.receptionist = FakeReceptionist(self._action_name, accept)
-        self.executor.add_node(self.receptionist)
+        """Start the receptionist, or replace the running one like a restart."""
+        if self.receptionist is not None:
+            self.receptionist.stop()
+        self.receptionist = FakeReceptionist(self._action_name, accept).spin_in_background()
+        self._receptionists.append(self.receptionist)
         wait_until(lambda: self.detector.receptionist_ready())
 
     def publish(self, scans, person=True):
@@ -130,6 +169,8 @@ class Harness:
             self.receptionist.end_visit()
         rclpy.try_shutdown()
         self.executor.shutdown()
+        for receptionist in self._receptionists:
+            receptionist.stop()
 
 
 def wait_until(condition, timeout=TIMEOUT):
@@ -221,3 +262,49 @@ def test_visitor_who_steps_away_shorter_than_the_timeout_does_not_start_a_new_vi
     h.publish(75)  # back for 1.5 s
 
     assert len(h.receptionist.goals) == 1
+
+
+def test_detector_rearms_when_the_receptionist_restarts_during_a_visit(harness):
+    h = harness(visitor_timeout=0.5, cooldown_period=0.5)
+    h.publish(20)
+    assert wait_until(lambda: len(h.receptionist.goals) == 1)
+
+    h.start_receptionist()  # the old one vanishes with the visit still open
+    h.publish(100, person=False)  # 2 s: lost visit noticed, clear and cooldown over
+    h.publish(30)
+
+    assert wait_until(lambda: len(h.receptionist.goals) == 1)
+
+
+def test_detector_rearms_when_the_receptionist_stops_during_a_visit(harness):
+    h = harness(visitor_timeout=0.5, cooldown_period=0.5)
+    h.publish(20)
+    assert wait_until(lambda: len(h.receptionist.goals) == 1)
+
+    h.receptionist.stop()
+    h.publish(100, person=False)  # 2 s without receptionist
+    h.start_receptionist()
+    h.publish(30)
+
+    assert wait_until(lambda: len(h.receptionist.goals) == 1)
+
+
+def test_goal_request_without_answer_counts_as_not_started_and_a_late_acceptance_is_canceled(
+        harness):
+    h = harness(receptionist_response_timeout=0.5)
+    h.receptionist.answer_delays = [2.0]  # answered too late, then waits to be canceled
+
+    h.publish(60)
+
+    assert wait_until(lambda: len(h.receptionist.goals) == 1)
+    assert wait_until(lambda: h.receptionist.canceled.is_set(), timeout=5.0)
+
+
+@pytest.mark.parametrize('bad', [
+    {'receptionist_response_timeout': 0.0},
+    {'stability_threshold': 2},
+])
+def test_invalid_detector_params_stop_the_node_at_startup(bad):
+    with pytest.raises(ValueError):
+        VisitorDetectorNode(parameter_overrides=[
+            Parameter(name, value=value) for name, value in bad.items()])

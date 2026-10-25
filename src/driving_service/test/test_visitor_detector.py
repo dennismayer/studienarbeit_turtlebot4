@@ -333,3 +333,20 @@ def test_empty_front_window_is_processed_without_warnings():
         reported = feed(detector, clock, empty_ranges(), 3)
 
     assert reported == []
+
+
+@pytest.mark.parametrize('bad', [
+    {'stability_threshold': 2},
+    {'frame_skip_rate': 0},
+    {'cooldown_period': -1.0},
+    {'visitor_timeout': -1.0},
+    {'angle_range': 400.0},
+    {'angle_range': 0.0},
+    {'min_confidence': -0.1},
+    {'min_confidence': 1.5},
+    {'person_width_min': 0.7, 'person_width_max': 0.35},
+    {'min_distance': 2.5, 'max_distance': 2.5},
+])
+def test_invalid_detection_params_are_rejected(bad):
+    with pytest.raises(ValueError):
+        make_params(**bad)
