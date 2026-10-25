@@ -1,6 +1,10 @@
 """MoveToLocation action against a fake Nav2 navigate_to_pose server."""
 
 import math
+import os
+import signal
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -35,7 +39,10 @@ class FakeNav2(Node):
         self.released = threading.Event()
         self.feedback_distance = None
         self.accept_delay = 0.0
+        self.accept_delays = []  # per goal, before falling back to accept_delay
+        self._answered_late = set()  # requests that got an accept_delays entry hold
         self.goals_to_reject = 0
+        self.stopped = threading.Event()
         self._server = ActionServer(
             self, NavigateToPose, action_name,
             goal_callback=self._on_goal,
@@ -43,8 +50,35 @@ class FakeNav2(Node):
             cancel_callback=lambda _: CancelResponse.ACCEPT,
             callback_group=ReentrantCallbackGroup())
 
-    def _on_goal(self, _goal):
-        time.sleep(self.accept_delay)
+    def spin_in_background(self):
+        """Spin in an executor of its own, so stop() can end it like a process."""
+        self._executor = MultiThreadedExecutor()
+        self._executor.add_node(self)
+        threading.Thread(target=self._executor.spin, daemon=True).start()
+        return self
+
+    def stop(self):
+        """Vanish like a crashed Nav2: running goals never get a result."""
+        if self.stopped.is_set():
+            return
+        # destroying the action server inside a spinning executor can kill its spin
+        # thread, so end the executor first, then the node, like a dying process
+        self.stopped.set()
+        self._executor.shutdown()
+        self._server.destroy()  # destroy_node() leaves action servers alive
+        self.destroy_node()
+
+    def close(self):
+        self.released.set()  # held goals must not block the teardown
+        self.stop()
+
+    def _on_goal(self, goal):
+        if self.accept_delays:
+            # rclpy hands goal_callback and execute the same request object
+            self._answered_late.add(id(goal))
+            time.sleep(self.accept_delays.pop(0))
+        else:
+            time.sleep(self.accept_delay)
         if self.goals_to_reject > 0:
             self.goals_to_reject -= 1
             return GoalResponse.REJECT
@@ -52,7 +86,10 @@ class FakeNav2(Node):
 
     def _execute(self, goal_handle):
         self.received.append(goal_handle.request.pose)
-        outcome = self.outcomes.pop(0) if self.outcomes else 'succeed'
+        if id(goal_handle.request) in self._answered_late:
+            outcome = 'hold'
+        else:
+            outcome = self.outcomes.pop(0) if self.outcomes else 'succeed'
         if self.feedback_distance is not None:
             feedback = NavigateToPose.Feedback()
             feedback.distance_remaining = self.feedback_distance
@@ -60,6 +97,8 @@ class FakeNav2(Node):
         result = NavigateToPose.Result()
         if outcome == 'hold':
             while not goal_handle.is_cancel_requested:
+                if self.stopped.is_set():
+                    return result
                 if self.released.wait(0.01) or not self.context.ok():
                     goal_handle.abort()
                     return result
@@ -81,6 +120,8 @@ class Harness:
     def __init__(self, outcomes=(), nav2_running=True, **params):
         prefix = '/test_' + uuid.uuid4().hex[:8]
         nav2_action = prefix + '/navigate_to_pose'
+        self._nav2_action = nav2_action
+        self._stopped_nav2 = []
         self.action_name = prefix + '/moveToLocation'
         overrides = {
             'action_name': self.action_name,
@@ -88,22 +129,29 @@ class Harness:
             'nav_retry_attempts': 3,
             'nav_retry_delay': 0.0,
             'nav2_server_timeout': 1.0,
+            # right after a Nav2 restart a goal request can get lost, don't wait long for it
+            'nav2_response_timeout': 2.0,
         }
         overrides.update(params)
         self.navigator = NavigatorNode(parameter_overrides=[
             Parameter(name, value=value) for name, value in overrides.items()])
-        self.nav2 = FakeNav2(nav2_action, outcomes) if nav2_running else None
+        self.nav2 = FakeNav2(nav2_action, outcomes).spin_in_background() if nav2_running else None
         self.client_node = Node('test_client_' + uuid.uuid4().hex[:8])
         self.client = ActionClient(self.client_node, MoveToLocation, self.action_name)
         self.feedback = []
 
         self.executor = MultiThreadedExecutor()
-        for node in (self.navigator, self.nav2, self.client_node):
-            if node is not None:
-                self.executor.add_node(node)
+        self.executor.add_node(self.navigator)
+        self.executor.add_node(self.client_node)
         self._thread = threading.Thread(target=self.executor.spin, daemon=True)
         self._thread.start()
         assert self.client.wait_for_server(timeout_sec=TIMEOUT)
+
+    def restart_nav2(self, outcomes=()):
+        """Replace Nav2 by a new server under the same name, like a respawn."""
+        self.nav2.stop()
+        self._stopped_nav2.append(self.nav2)
+        self.nav2 = FakeNav2(self._nav2_action, outcomes).spin_in_background()
 
     def send(self, x=0.0, y=0.0, yaw=0.0):
         """Send a goal, return its goal handle once accepted or rejected."""
@@ -125,13 +173,15 @@ class Harness:
             self.nav2.released.set()  # held goals must not block the teardown
         rclpy.try_shutdown()  # lets a navigator that waits on Nav2 give up
         self.executor.shutdown()
-        for node in (self.navigator, self.nav2, self.client_node):
-            if node is not None:
-                node.destroy_node()
+        for fake in (self.nav2, *self._stopped_nav2):
+            if fake is not None:
+                fake.close()
+        self.navigator.destroy_node()
+        self.client_node.destroy_node()
 
 
-def wait_for(future):
-    deadline = time.monotonic() + TIMEOUT
+def wait_for(future, timeout=TIMEOUT):
+    deadline = time.monotonic() + timeout
     while not future.done():
         assert time.monotonic() < deadline, 'timed out'
         time.sleep(0.01)
@@ -143,6 +193,7 @@ def wait_until(condition, timeout=2.0):
     deadline = time.monotonic() + timeout
     while not condition() and time.monotonic() < deadline:
         time.sleep(0.01)
+    return condition()
 
 
 @pytest.fixture(autouse=True)
@@ -359,3 +410,128 @@ def test_cancel_during_the_last_attempt_ends_as_canceled(harness):
 
     assert result_response.status == GoalStatus.STATUS_CANCELED
     assert result_response.result.message == 'Canceled'
+
+
+@pytest.mark.parametrize('bad', [
+    {'nav_retry_attempts': 0},
+    {'nav2_response_timeout': 0.0},
+    {'nav2_server_timeout': 0.0},
+    {'nav_retry_delay': -1.0},
+])
+def test_invalid_navigator_params_stop_the_node_at_startup(bad):
+    with pytest.raises(ValueError):
+        NavigatorNode(parameter_overrides=[
+            Parameter(name, value=value) for name, value in bad.items()])
+
+
+@pytest.mark.parametrize('goal', [
+    {'x': math.nan},
+    {'yaw': -math.inf},
+    {'y': math.inf},
+])
+def test_goal_with_a_non_finite_coordinate_is_rejected(harness, goal):
+    h = harness(outcomes=['succeed'])
+
+    goal_handle = h.send(**goal)
+
+    assert not goal_handle.accepted
+    assert h.nav2.received == []
+
+
+def test_cancel_while_waiting_for_the_nav2_server_ends_as_canceled(harness):
+    h = harness(nav2_running=False, nav2_server_timeout=5.0)
+    goal_handle = h.send(x=1.0, y=1.0)
+    time.sleep(0.3)
+
+    started = time.monotonic()
+    wait_for(goal_handle.cancel_goal_async())
+    result_response = wait_for(goal_handle.get_result_async())
+
+    assert result_response.status == GoalStatus.STATUS_CANCELED
+    assert result_response.result.message == 'Canceled'
+    assert time.monotonic() - started < 3.0
+
+
+def test_goal_ends_when_nav2_vanishes_during_the_drive(harness):
+    h = harness(outcomes=['hold'], nav2_server_timeout=1.0)
+    goal_handle = h.send(x=1.0, y=1.0)
+    wait_until(lambda: len(h.nav2.received) == 1)
+
+    h.nav2.stop()
+    result_response = wait_for(goal_handle.get_result_async())
+
+    assert result_response.status == GoalStatus.STATUS_ABORTED
+    assert result_response.result.message == 'Nav2Unavailable'
+
+
+def test_goal_is_retried_on_a_restarted_nav2(harness):
+    # requests to a freshly started Nav2 can get lost for a few seconds on a busy Pi;
+    # each lost one costs an attempt, so allow some
+    h = harness(outcomes=['hold'], nav_retry_attempts=6)
+    goal_handle = h.send(x=1.0, y=1.0)
+    wait_until(lambda: len(h.nav2.received) == 1)
+
+    h.restart_nav2(outcomes=['succeed'])
+    result = wait_for(goal_handle.get_result_async(), timeout=20.0).result
+
+    assert (result.success, result.message) == (True, 'Reached')
+    assert result.attempts >= 2
+
+
+def test_goal_request_without_answer_is_retried_and_a_late_acceptance_canceled(harness):
+    h = harness(outcomes=['succeed'], nav2_response_timeout=1.5)
+    h.nav2.accept_delays = [2.0]  # answered too late, then holds; requests are answered in turn
+
+    result = h.move_to(x=1.0, y=1.0)
+
+    assert (result.success, result.message, result.attempts) == (True, 'Reached', 2)
+    assert wait_until(lambda: h.nav2.canceled.is_set(), timeout=5.0)
+
+
+def run_navigator_and_ctrl_c(accept_delay, sigint_when):
+    """Run the navigator as a process, Ctrl-C it during a drive; True if Nav2 saw a cancel."""
+    prefix = '/test_' + uuid.uuid4().hex[:8]
+    nav2 = FakeNav2(prefix + '/navigate_to_pose', ['hold'])
+    nav2.accept_delays = [accept_delay] if accept_delay else []
+    client_node = Node('test_client_' + uuid.uuid4().hex[:8])
+    client = ActionClient(client_node, MoveToLocation, prefix + '/moveToLocation')
+    executor = MultiThreadedExecutor()
+    executor.add_node(nav2)
+    executor.add_node(client_node)
+    threading.Thread(target=executor.spin, daemon=True).start()
+    navigator = subprocess.Popen(
+        [sys.executable, '-m', 'driving_service.navigator_node', '--ros-args',
+         '-p', f'action_name:={prefix}/moveToLocation',
+         '-p', f'nav2_action:={prefix}/navigate_to_pose'],
+        env={**os.environ, 'ROS_DOMAIN_ID': str(TEST_DOMAIN_ID)})
+    try:
+        assert client.wait_for_server(timeout_sec=TIMEOUT)
+        client.send_goal_async(MoveToLocation.Goal(x=1.0, y=1.0))
+        sigint_when(nav2)
+
+        navigator.send_signal(signal.SIGINT)
+
+        canceled = wait_until(lambda: nav2.canceled.is_set(), timeout=5.0)
+        assert navigator.wait(timeout=TIMEOUT) is not None
+        return canceled
+    finally:
+        if navigator.poll() is None:
+            navigator.kill()
+        nav2.released.set()
+        rclpy.try_shutdown()
+        executor.shutdown()
+
+
+def test_ctrl_c_of_the_navigator_process_cancels_the_running_nav2_goal():
+    def while_driving(nav2):
+        assert wait_until(lambda: len(nav2.received) == 1, timeout=TIMEOUT)
+        time.sleep(0.5)  # the navigator has Nav2's goal handle
+
+    assert run_navigator_and_ctrl_c(accept_delay=0.0, sigint_when=while_driving)
+
+
+def test_ctrl_c_before_nav2_accepted_still_cancels_the_nav2_goal():
+    def while_nav2_decides(nav2):
+        time.sleep(1.0)  # request sent, Nav2 answers only after 2 s
+
+    assert run_navigator_and_ctrl_c(accept_delay=2.0, sigint_when=while_nav2_decides)

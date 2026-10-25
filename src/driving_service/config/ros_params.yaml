@@ -25,6 +25,11 @@
     # with "Nav2Unavailable" after that.
     nav2_server_timeout: 5.0
 
+    # Seconds to wait for Nav2 to accept or reject a goal. Right after a Nav2
+    # restart a goal request can get lost; it then counts as a failed attempt
+    # (a late acceptance is canceled right away).
+    nav2_response_timeout: 5.0
+
 # ---------------------------------------------------------------------------
 # VisitorDetector: LiDAR clustering, sends VisitorDetected goals
 # ---------------------------------------------------------------------------
@@ -35,6 +40,10 @@
 
     # LaserScan topic of the LiDAR.
     scan_topic: "/scan"
+
+    # Seconds to wait for the receptionist to accept or reject a visitor; no
+    # answer counts as a visit that never started (a late acceptance is canceled).
+    receptionist_response_timeout: 5.0
 
     # Scan angle in radians that points straight ahead of the robot.
     # The TurtleBot4 mounts the RPLIDAR rotated +90 degrees (base_link ->
