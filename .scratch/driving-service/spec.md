@@ -40,6 +40,15 @@ These two packages are agent-owned (see the exception in `AGENTS.md`).
 16. Re-arming after a Visit (result received, goal rejected, or server error): only once no candidate has been seen for `visitor_timeout` seconds, and then after `cooldown_period` more seconds. The same re-arm applies if the goal is rejected.
 17. If no VisitorDetected server is available, the detector logs it (throttled) and stays armed; it does not queue detections.
 
+### Robustness (added after QA report 1, 2026-10-25)
+18. A peer that dies, restarts or never answers must not leave a node stuck:
+    - Navigator: a Nav2 goal request that gets no answer within `nav2_response_timeout` is a failed attempt (a late acceptance is canceled right away); a Nav2 server that disappears or is replaced while a goal runs fails that attempt; before each attempt the Nav2 server must be available, else the goal fails with `"Nav2Unavailable"`.
+    - Detector: a VisitorDetected goal request with no answer within `receptionist_response_timeout` counts as a visit that never started (a late acceptance is canceled right away); a receptionist that disappears or is replaced during a Visit ends the Visit (re-arm as in 16).
+19. Canceling while the Navigator still waits for the Nav2 server ends the goal as `"Canceled"`.
+20. Invalid parameters (e.g. `nav_retry_attempts` < 1, `stability_threshold` < 3, `lidar_frame_skip_rate` < 1, min ≥ max ranges, `min_confidence` outside 0..1) stop the node at startup with a clear error.
+21. MoveToLocation goals with a NaN or infinite coordinate are rejected.
+22. On Ctrl-C/SIGINT the Navigator cancels the running Nav2 goal before it exits (user decision 2026-10-25: Nav2 must not keep driving with nobody owning the goal).
+
 ### Out of scope
 - The VisitorDetected server (the receptionist main loop in `receptionist_bot`) — the user writes it.
 - Return-to-reception logic and the list of saved Locations — owned by the receptionist.
@@ -52,8 +61,11 @@ These two packages are agent-owned (see the exception in `AGENTS.md`).
 - Implemented test-first and mutation-checked (commits af7a08c..71f960b): `driving_interfaces`; `driving_service` with `visitor_detector.py` (pure logic), `navigator_node.py`, `visitor_detector_node.py`, `run_node.py`, `config/ros_params.yaml`, `launch/driving_service.launch.py`.
 - Mutation survivor (equivalent, kept): the explicit "rejected goal" branch in `VisitorDetectorNode._on_goal_response`; rclpy also answers a result request for a rejected goal, so the outcome is the same, but relying on that is fragile.
 
+- QA report 1 (at 60dac1c): Fails — see `qa-report-1.md`. Fails N11, N15, V9, X1a, N9, V13 and concern N13 lead to requirements 18–22.
+- V1 (detector on the real LiDAR) blocked: the LiDAR stopped after a power loss; the user restarts it (decision 2026-10-25).
+
 ### Next steps
-- QA, then code review.
+- Implement 18–22 test-first, follow-up QA, then code review.
 
 ### How to run
 - Gate: `colcon build --packages-select driving_interfaces driving_service && colcon test --packages-select driving_service && colcon test-result --test-result-base build/driving_service`
