@@ -20,3 +20,4 @@ The user writes the code in this repo themselves to learn it.
 - Short snippets are fine when the user asks for a specific small part (a function, a few lines).
 - Never write or sketch a complete node, module, or end-to-end implementation, even as an "example".
 - When reviewing their code, name the problem and where it is; let them write the fix unless they ask for it.
+- Exception: `src/driving_interfaces` and `src/driving_service` are owned by the agent. Implement and maintain them fully.
