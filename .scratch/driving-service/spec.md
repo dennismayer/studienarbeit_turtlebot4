@@ -42,12 +42,13 @@ These two packages are agent-owned (see the exception in `AGENTS.md`).
 
 ### Robustness (added after QA report 1, 2026-10-25)
 18. A peer that dies, restarts or never answers must not leave a node stuck:
-    - Navigator: a Nav2 goal request that gets no answer within `nav2_response_timeout` is a failed attempt (a late acceptance is canceled right away); a Nav2 server that disappears or is replaced while a goal runs fails that attempt; before each attempt the Nav2 server must be available, else the goal fails with `"Nav2Unavailable"`.
-    - Detector: a VisitorDetected goal request with no answer within `receptionist_response_timeout` counts as a visit that never started (a late acceptance is canceled right away); a receptionist that disappears or is replaced during a Visit ends the Visit (re-arm as in 16).
+    - "Server gone" means every server endpoint that was in the graph when the goal was sent has left it. A crashed copy can linger in the graph for ~20 s after kill -9; it leaving while the live server stays does not count (QA report 2, X2/X2v).
+    - Navigator: a Nav2 goal request that gets no answer within `nav2_response_timeout` is a failed attempt (a late acceptance is canceled right away); a Nav2 server that is gone while a goal runs fails that attempt; before each attempt the Nav2 server must be available, else the goal fails with `"Nav2Unavailable"`.
+    - Detector: a VisitorDetected goal request with no answer within `receptionist_response_timeout` counts as a visit that never started (a late acceptance is canceled right away); a receptionist that is gone during a Visit ends the Visit (re-arm as in 16).
 19. Canceling while the Navigator still waits for the Nav2 server ends the goal as `"Canceled"`.
 20. Invalid parameters (e.g. `nav_retry_attempts` < 1, `stability_threshold` < 3, `lidar_frame_skip_rate` < 1, min ≥ max ranges, `min_confidence` outside 0..1) stop the node at startup with a clear error.
 21. MoveToLocation goals with a NaN or infinite coordinate are rejected.
-22. On Ctrl-C/SIGINT the Navigator cancels the running Nav2 goal before it exits (user decision 2026-10-25: Nav2 must not keep driving with nobody owning the goal).
+22. On Ctrl-C/SIGINT the Navigator cancels the running Nav2 goal before it exits (user decision 2026-10-25: Nav2 must not keep driving with nobody owning the goal), sends no new Nav2 goal, and ends the running MoveToLocation goal as aborted with `"Navigator shutting down"` so the client isn't left waiting.
 
 ### Out of scope
 - The VisitorDetected server (the receptionist main loop in `receptionist_bot`) — the user writes it.
@@ -67,8 +68,11 @@ These two packages are agent-owned (see the exception in `AGENTS.md`).
 - Requirements 18–22 implemented test-first and mutation-checked (8a2ba6c, 9524dd2). Mutation survivor (kept): the "already given up on this visit" guard in `VisitorDetectorNode._on_visit_over`; no fake can deliver a late result from a vanished receptionist.
 - Test-harness lessons (rclpy Jazzy): a node added to an already spinning executor is not always picked up; destroying an action server inside a spinning executor can kill the spin thread; `destroy_node()` leaves action servers alive. Fakes now run in executors of their own and stop like a dying process.
 
+- QA report 2 (at 79244a7): Fails — new X2/X2v from the identity check; see `qa-report-2.md`. Fixed with the "server gone" rule above; Ctrl-C now also ends the client's goal (concern from report 2).
+- Open concerns from report 2, not changed: a dead Nav2 with no replacement ends as "Nav2 did not answer the goal request" (it still looks ready until it leaves the graph); a slow but alive receptionist gets a new request about every 6 s.
+
 ### Next steps
-- Follow-up QA (scoped to 60dac1c..HEAD), then code review.
+- Follow-up QA 3, then code review.
 
 ### How to run
 - Gate: `colcon build --packages-select driving_interfaces driving_service && colcon test --packages-select driving_service && colcon test-result --test-result-base build/driving_service`

@@ -11,7 +11,7 @@ import time
 
 from action_msgs.msg import GoalStatus
 from driving_interfaces.action import MoveToLocation
-from driving_service.action_peer import server_identity
+from driving_service.action_peer import server_gone, server_identity
 from driving_service.run_node import run
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
@@ -25,6 +25,8 @@ from rclpy.node import Node
 PEER_CHECK_PERIOD = 0.5
 # seconds Ctrl-C waits for Nav2 to confirm the cancel of the running goal
 STOP_CANCEL_TIMEOUT = 2.0
+# seconds Ctrl-C keeps spinning after the running goal ended, so its result goes out
+STOP_RESULT_FLUSH = 0.5
 
 
 class NavigatorNode(Node):
@@ -57,6 +59,7 @@ class NavigatorNode(Node):
         self._busy_lock = threading.Lock()
         self._nav_handle = None
         self._send_future = None  # goal request to Nav2 that has no answer yet
+        self._stopping = threading.Event()  # Ctrl-C: end the running goal, start no new attempt
 
         # reentrant, so Nav2 responses arrive while a goal is being executed
         group = ReentrantCallbackGroup()
@@ -95,7 +98,12 @@ class NavigatorNode(Node):
             return GoalResponse.ACCEPT
 
     def stop(self, executor):
-        """Cancel the running Nav2 goal, so Nav2 doesn't drive on without us."""
+        """
+        Cancel the running Nav2 goal, so Nav2 doesn't drive on without us.
+
+        The running MoveToLocation goal then ends with "Navigator shutting down".
+        """
+        self._stopping.set()
         send_future = self._send_future
         if send_future is not None:
             # Nav2 may still accept the goal we just sent; wait for its answer
@@ -107,6 +115,13 @@ class NavigatorNode(Node):
             self.get_logger().info('Canceling the running Nav2 goal')
             executor.spin_until_future_complete(
                 nav_handle.cancel_goal_async(), timeout_sec=STOP_CANCEL_TIMEOUT)
+        # let the running goal end, and rclpy send its result, before ROS goes down
+        deadline = time.monotonic() + STOP_CANCEL_TIMEOUT
+        while self._busy and time.monotonic() < deadline:
+            executor.spin_once(timeout_sec=0.1)
+        flush_until = time.monotonic() + STOP_RESULT_FLUSH
+        while time.monotonic() < flush_until:
+            executor.spin_once(timeout_sec=0.05)
 
     def _on_cancel(self, _goal_handle):
         nav_handle = self._nav_handle
@@ -134,6 +149,10 @@ class NavigatorNode(Node):
                 if goal_handle.is_cancel_requested:
                     result.message = 'Canceled'
                     goal_handle.canceled()
+                    return result
+                if self._stopping.is_set():
+                    result.message = 'Navigator shutting down'
+                    goal_handle.abort()
                     return result
             if not self._wait_for_nav2(goal_handle, server_timeout):
                 if goal_handle.is_cancel_requested:
@@ -170,11 +189,15 @@ class NavigatorNode(Node):
                 nav_handle.cancel_goal_async()
             nav_result = self._wait(
                 nav_handle.get_result_async(),
-                give_up=lambda: server_identity(self, self._nav2_name) != nav2)
+                give_up=lambda: server_gone(self, self._nav2_name, nav2))
             self._nav_handle = None
             if goal_handle.is_cancel_requested:
                 result.message = 'Canceled'
                 goal_handle.canceled()
+                return result
+            if self._stopping.is_set():
+                result.message = 'Navigator shutting down'
+                goal_handle.abort()
                 return result
             if nav_result is None:
                 result.message = 'Nav2 lost the goal (server stopped or restarted)'
@@ -210,6 +233,8 @@ class NavigatorNode(Node):
     def _sleep_unless_canceled(self, goal_handle, seconds):
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline and not goal_handle.is_cancel_requested:
+            if self._stopping.is_set():
+                return
             if not self.context.ok():
                 raise RuntimeError('Shutting down')
             time.sleep(0.05)

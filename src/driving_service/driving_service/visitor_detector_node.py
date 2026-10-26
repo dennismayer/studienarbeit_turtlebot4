@@ -8,7 +8,7 @@ import math
 import sys
 
 from driving_interfaces.action import VisitorDetected
-from driving_service.action_peer import server_identity
+from driving_service.action_peer import server_gone, server_identity
 from driving_service.run_node import run
 from driving_service.visitor_detector import DetectionParams, Visitor, VisitorDetector
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType
@@ -156,7 +156,7 @@ class VisitorDetectorNode(Node):
         if self._open_visit is None:
             return
         _goal_handle, identity = self._open_visit
-        if server_identity(self, self._action_name) != identity:
+        if server_gone(self, self._action_name, identity):
             self.get_logger().warning('Receptionist stopped or restarted, its visit is lost')
             self._open_visit = None
             self._detector.visit_finished(self._now())

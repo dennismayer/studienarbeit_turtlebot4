@@ -62,6 +62,7 @@ class FakeReceptionist(Node):
         self._answered_late = set()
         self._end_visit = threading.Event()
         self._stopped = threading.Event()
+        self._executor = None  # a fake that is never spun answers nothing, like a crashed one
         self._server = ActionServer(
             self, VisitorDetected, action_name,
             goal_callback=self._on_goal,
@@ -83,7 +84,8 @@ class FakeReceptionist(Node):
         # destroying the action server inside a spinning executor can kill its spin
         # thread, so end the executor first, then the node, like a dying process
         self._stopped.set()
-        self._executor.shutdown()
+        if self._executor is not None:
+            self._executor.shutdown()
         self._server.destroy()  # destroy_node() leaves action servers alive
         self.destroy_node()
 
@@ -157,6 +159,12 @@ class Harness:
         self.receptionist = FakeReceptionist(self._action_name, accept).spin_in_background()
         self._receptionists.append(self.receptionist)
         wait_until(lambda: self.detector.receptionist_ready())
+
+    def start_zombie_receptionist(self):
+        """Second server under the same name that never answers, like a crashed copy."""
+        zombie = FakeReceptionist(self._action_name)  # not spun: answers nothing
+        self._receptionists.append(zombie)
+        return zombie
 
     def publish(self, scans, person=True):
         """Publish scans at about 50 Hz."""
@@ -298,6 +306,20 @@ def test_goal_request_without_answer_counts_as_not_started_and_a_late_acceptance
 
     assert wait_until(lambda: len(h.receptionist.goals) == 1)
     assert wait_until(lambda: h.receptionist.canceled.is_set(), timeout=5.0)
+
+
+def test_open_visit_is_kept_when_a_crashed_receptionist_copy_leaves_the_graph(harness):
+    h = harness(visitor_timeout=0.5, cooldown_period=0.5)
+    zombie = h.start_zombie_receptionist()
+    time.sleep(1.0)  # both copies are in the graph when the visitor is sent
+    h.publish(20)
+    assert wait_until(lambda: len(h.receptionist.goals) == 1)
+
+    zombie.stop()  # the crashed copy finally drops out
+    h.publish(75, person=False)  # 1.5 s: a lost visit would re-arm by now
+    h.publish(30)
+
+    assert h.receptionist.offered == 1
 
 
 @pytest.mark.parametrize('bad', [
