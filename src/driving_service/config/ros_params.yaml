@@ -51,15 +51,18 @@
     lidar_front_angle: -1.5707963
 
     # Width of the front window in degrees, centered on lidar_front_angle.
+    # 80 caught objects at the side of the reception (real-LiDAR test 2026-10-26).
     detection_angle_range: 60.0
 
     # Mean distance of a visitor cluster in meters.
     detection_distance_min: 0.8
-    detection_distance_max: 2.5
+    detection_distance_max: 2.0
 
-    # Width of a cluster that counts as a person in meters.
-    person_width_min: 0.35
-    person_width_max: 0.7
+    # Width of a cluster that counts as a person in meters. The TurtleBot4 LiDAR
+    # scans at ankle height, so it sees legs, not a torso: feet together 0.28-0.33,
+    # feet apart about 0.38 (two 0.12 legs, real-LiDAR test 2026-10-26).
+    person_width_min: 0.15
+    person_width_max: 0.55
 
     # Lowest confidence (0..1) of a visitor candidate. The confidence weighs
     # how close the width is to the middle of the person range, how close the

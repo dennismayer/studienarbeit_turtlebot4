@@ -287,6 +287,28 @@ def test_confidence_falls_from_about_1_near_to_about_085_at_the_far_edge():
     assert [v.confidence for v in far] == pytest.approx([0.855], abs=0.03)
 
 
+def scan_with_legs_apart(distance=1.2, background=None):
+    """Two 0.12 m legs 0.15 m apart, as the LiDAR sees them at ankle height."""
+    ranges = empty_ranges()
+    if background is not None:
+        ranges = add_object(ranges, distance=background, angle=0.0, width=6.0)
+    for side in (-1, 1):
+        add_object(ranges, distance, angle=side * math.atan2(0.135, distance), width=0.12)
+    return ranges
+
+
+@pytest.mark.parametrize('background', [None, 4.0])
+def test_person_with_legs_apart_is_reported_as_one_visitor(background):
+    detector = VisitorDetector(make_params(person_width_min=0.15, person_width_max=0.55))
+    clock = Clock()
+
+    reported = feed(detector, clock, scan_with_legs_apart(background=background), 10)
+
+    assert len(reported) == 1
+    assert reported[0].distance == pytest.approx(1.2, abs=0.05)
+    assert reported[0].angle == pytest.approx(0.0, abs=0.03)
+
+
 def test_person_standing_in_front_of_a_wall_is_reported():
     detector = VisitorDetector(make_params())
     clock = Clock()

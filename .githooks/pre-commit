@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Lints the staged files of LINTED_PACKAGES with the ament linters their colcon tests
+# run (flake8, pep257, xmllint, lint_cmake), so a commit can't land with a lint failure
+# that `colcon test` reports only later.
+# Enable once per clone: git config core.hooksPath .githooks
+# Bypass for one commit: git commit --no-verify
+# Add a package once it lints clean: ament_flake8 src/<pkg> && ament_pep257 src/<pkg>
+set -eo pipefail
+
+LINTED_PACKAGES=(driving_interfaces driving_service)
+
+pattern=$(IFS='|'; echo "${LINTED_PACKAGES[*]}")
+mapfile -t files < <(git diff --cached --name-only --diff-filter=ACMR \
+  | grep -E "^src/(${pattern})/" || true)
+[ ${#files[@]} -eq 0 ] && exit 0
+
+if ! command -v ament_flake8 > /dev/null; then
+  source /opt/ros/jazzy/setup.bash
+fi
+
+# lint what gets committed, not the working tree
+staged=$(mktemp -d)
+trap 'rm -rf "$staged"' EXIT
+git checkout-index --prefix="$staged/" -- "${files[@]}"
+cd "$staged"
+
+py=() xml=() cmake=()
+for f in "${files[@]}"; do
+  case $f in
+    *.py) py+=("$f") ;;
+    */package.xml) xml+=("$f") ;;
+    */CMakeLists.txt) cmake+=("$f") ;;
+  esac
+done
+
+failed=0
+lint() {
+  local out
+  if ! out=$("$@" 2>&1); then
+    echo "$out"
+    failed=1
+  fi
+}
+[ ${#py[@]} -gt 0 ] && lint ament_flake8 "${py[@]}"
+[ ${#py[@]} -gt 0 ] && lint ament_pep257 "${py[@]}"
+[ ${#xml[@]} -gt 0 ] && lint ament_xmllint "${xml[@]}"
+[ ${#cmake[@]} -gt 0 ] && lint ament_lint_cmake "${cmake[@]}"
+
+if [ $failed -ne 0 ]; then
+  echo "pre-commit: lint failed in ${LINTED_PACKAGES[*]}; fix it, or bypass with --no-verify" >&2
+  exit 1
+fi

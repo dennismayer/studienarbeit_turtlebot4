@@ -26,7 +26,7 @@ FRONT = -math.pi / 2
 
 
 def scan(person=True):
-    """Scan with a 0.5 m wide person 1.2 m straight ahead, or an empty one."""
+    """Scan with a person 1.2 m straight ahead (feet together, 0.3 m), or an empty one."""
     msg = LaserScan()
     msg.header.frame_id = 'rplidar_link'
     msg.angle_min = ANGLE_MIN
@@ -36,7 +36,7 @@ def scan(person=True):
     msg.range_max = 12.0
     ranges = [math.inf] * NUM_POINTS
     if person:
-        half_span = math.atan2(0.25, 1.2)
+        half_span = math.atan2(0.15, 1.2)
         for i in range(NUM_POINTS):
             angle = ANGLE_MIN + i * ANGLE_INCREMENT
             offset = math.atan2(math.sin(angle - FRONT), math.cos(angle - FRONT))
