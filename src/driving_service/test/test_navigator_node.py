@@ -444,8 +444,10 @@ def test_goal_is_retried_on_a_restarted_nav2(harness):
 
 
 def test_goal_request_without_answer_is_retried_and_a_late_acceptance_canceled(harness):
-    h = harness(outcomes=['succeed'], nav2_response_timeout=1.5)
-    h.nav2.accept_delays = [2.0]  # answered too late, then holds; requests are answered in turn
+    # wide margins: a starved waiting thread takes an answer that already arrived as in time;
+    # the retry goes out after the late answer, so it doesn't queue behind it
+    h = harness(outcomes=['succeed'], nav2_response_timeout=1.5, nav_retry_delay=2.5)
+    h.nav2.accept_delays = [3.5]  # answered too late, then holds
 
     result = h.move_to(x=1.0, y=1.0)
 
