@@ -20,15 +20,12 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
+from ros_test_tools import SpinsAlone, TEST_DOMAIN_ID, TIMEOUT, wait_for, wait_until
 
-# A domain of its own and no discovery server, so no test can ever reach the
-# robot's real Nav2: the robot's Fast DDS discovery server (ROS_DISCOVERY_SERVER) connects
-# participants across domain IDs, so the domain ID alone does not isolate.
-TEST_DOMAIN_ID = 87
-TIMEOUT = 10.0
+pytestmark = pytest.mark.usefixtures('ros')
 
 
-class FakeNav2(Node):
+class FakeNav2(SpinsAlone, Node):
     """navigate_to_pose server that plays back scripted outcomes, one per goal."""
 
     def __init__(self, action_name, outcomes):
@@ -50,25 +47,6 @@ class FakeNav2(Node):
             execute_callback=self._execute,
             cancel_callback=lambda _: CancelResponse.ACCEPT,
             callback_group=ReentrantCallbackGroup())
-
-    def spin_in_background(self):
-        """Spin in an executor of its own, so stop() can end it like a process."""
-        self._executor = MultiThreadedExecutor()
-        self._executor.add_node(self)
-        threading.Thread(target=self._executor.spin, daemon=True).start()
-        return self
-
-    def stop(self):
-        """Vanish like a crashed Nav2: running goals never get a result."""
-        if self.stopped.is_set():
-            return
-        # destroying the action server inside a spinning executor can kill its spin
-        # thread, so end the executor first, then the node, like a dying process
-        self.stopped.set()
-        if self._executor is not None:
-            self._executor.shutdown()
-        self._server.destroy()  # destroy_node() leaves action servers alive
-        self.destroy_node()
 
     def close(self):
         self.released.set()  # held goals must not block the teardown
@@ -190,31 +168,6 @@ class Harness:
                 fake.close()
         self.navigator.destroy_node()
         self.client_node.destroy_node()
-
-
-def wait_for(future, timeout=TIMEOUT):
-    deadline = time.monotonic() + timeout
-    while not future.done():
-        assert time.monotonic() < deadline, 'timed out'
-        time.sleep(0.01)
-    return future.result()
-
-
-def wait_until(condition, timeout=2.0):
-    """Give late messages (feedback arrives independently of results) a moment."""
-    deadline = time.monotonic() + timeout
-    while not condition() and time.monotonic() < deadline:
-        time.sleep(0.01)
-    return condition()
-
-
-@pytest.fixture(autouse=True)
-def ros(monkeypatch):
-    monkeypatch.delenv('ROS_DISCOVERY_SERVER', raising=False)
-    monkeypatch.setenv('ROS_AUTOMATIC_DISCOVERY_RANGE', 'LOCALHOST')
-    rclpy.init(domain_id=TEST_DOMAIN_ID)
-    yield
-    rclpy.try_shutdown()
 
 
 @pytest.fixture

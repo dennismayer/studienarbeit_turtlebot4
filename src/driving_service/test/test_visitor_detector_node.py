@@ -9,19 +9,16 @@ from driving_interfaces.action import VisitorDetected
 from driving_service.VisitorDetectorNode import VisitorDetectorNode
 import pytest
 import rclpy
-from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
+from ros_test_tools import SpinsAlone, wait_until
 from sensor_msgs.msg import LaserScan
 
-# A domain of its own and no discovery server, so no test can ever reach the
-# robot's real nodes: the robot's Fast DDS discovery server (ROS_DISCOVERY_SERVER) connects
-# participants across domain IDs, so the domain ID alone does not isolate.
-TEST_DOMAIN_ID = 87
-TIMEOUT = 10.0
+pytestmark = pytest.mark.usefixtures('ros')
 NUM_POINTS = 720
 ANGLE_MIN = -math.pi + 0.0175
 ANGLE_INCREMENT = 2 * math.pi / NUM_POINTS
@@ -49,7 +46,7 @@ def scan(person=True):
     return msg
 
 
-class FakeReceptionist(Node):
+class FakeReceptionist(SpinsAlone, Node):
     """VisitorDetected server: records goals and keeps each visit open until told to end it."""
 
     def __init__(self, action_name, accept=True):
@@ -61,7 +58,7 @@ class FakeReceptionist(Node):
         self.canceled = threading.Event()
         self._answered_late = set()
         self._end_visit = threading.Event()
-        self._stopped = threading.Event()
+        self.stopped = threading.Event()
         self._executor = None  # a fake that is never spun answers nothing, like a crashed one
         self._server = ActionServer(
             self, VisitorDetected, action_name,
@@ -69,25 +66,6 @@ class FakeReceptionist(Node):
             cancel_callback=lambda _: CancelResponse.ACCEPT,
             execute_callback=self._execute,
             callback_group=ReentrantCallbackGroup())
-
-    def spin_in_background(self):
-        """Spin in an executor of its own, so stop() can end it like a process."""
-        self._executor = MultiThreadedExecutor()
-        self._executor.add_node(self)
-        threading.Thread(target=self._executor.spin, daemon=True).start()
-        return self
-
-    def stop(self):
-        """Vanish like a crashed or Ctrl-C'd main loop: the open visit never ends."""
-        if self._stopped.is_set():
-            return
-        # destroying the action server inside a spinning executor can kill its spin
-        # thread, so end the executor first, then the node, like a dying process
-        self._stopped.set()
-        if self._executor is not None:
-            self._executor.shutdown()
-        self._server.destroy()  # destroy_node() leaves action servers alive
-        self.destroy_node()
 
     def _on_goal(self, goal):
         self.offered += 1
@@ -106,7 +84,7 @@ class FakeReceptionist(Node):
             return VisitorDetected.Result()
         self.goals.append(goal_handle.request)
         while not self._end_visit.wait(0.01):
-            if self._stopped.is_set():
+            if self.stopped.is_set():
                 return VisitorDetected.Result()
             if not self.context.ok():
                 break
@@ -142,6 +120,8 @@ class Harness:
         self.publisher_node = Node('test_scan_' + uuid.uuid4().hex[:8])
         self.publisher = self.publisher_node.create_publisher(
             LaserScan, scan_topic, qos_profile_sensor_data)
+        # tells when a receptionist is reachable under the action name
+        self._readiness_probe = ActionClient(self.publisher_node, VisitorDetected, action_name)
 
         self.executor = MultiThreadedExecutor()
         self.executor.add_node(self.detector)
@@ -158,7 +138,7 @@ class Harness:
             self.receptionist.stop()
         self.receptionist = FakeReceptionist(self._action_name, accept).spin_in_background()
         self._receptionists.append(self.receptionist)
-        wait_until(lambda: self.detector.receptionist_ready())
+        wait_until(lambda: self._readiness_probe.server_is_ready())
 
     def start_zombie_receptionist(self):
         """Second server under the same name that never answers, like a crashed copy."""
@@ -179,22 +159,6 @@ class Harness:
         self.executor.shutdown()
         for receptionist in self._receptionists:
             receptionist.stop()
-
-
-def wait_until(condition, timeout=TIMEOUT):
-    deadline = time.monotonic() + timeout
-    while not condition() and time.monotonic() < deadline:
-        time.sleep(0.01)
-    return condition()
-
-
-@pytest.fixture(autouse=True)
-def ros(monkeypatch):
-    monkeypatch.delenv('ROS_DISCOVERY_SERVER', raising=False)
-    monkeypatch.setenv('ROS_AUTOMATIC_DISCOVERY_RANGE', 'LOCALHOST')
-    rclpy.init(domain_id=TEST_DOMAIN_ID)
-    yield
-    rclpy.try_shutdown()
 
 
 @pytest.fixture
