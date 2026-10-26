@@ -75,10 +75,6 @@ class VisitorDetectorNode(Node):
             LaserScan, value(self, 'scan_topic'), self._on_scan, qos_profile_sensor_data)
         self.get_logger().info('Visitor detector started')
 
-    def receptionist_ready(self) -> bool:
-        """Whether the VisitorDetected server is up."""
-        return self._client.server_is_ready()
-
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds / 1e9
 
