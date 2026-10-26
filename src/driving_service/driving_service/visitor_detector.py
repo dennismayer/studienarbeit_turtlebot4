@@ -15,6 +15,8 @@ import numpy as np
 
 # neighboring points further apart than this start a new cluster
 MAX_POINT_GAP = 0.1
+# fewer points are noise, even when their width fits (a person at 2.5 m gives 16)
+MIN_CLUSTER_POINTS = 3
 
 WIDTH_SCORE_WEIGHT = 0.5
 DISTANCE_SCORE_WEIGHT = 0.3
@@ -91,6 +93,7 @@ class VisitorDetector:
         angle_min: float,
         angle_increment: float,
         range_min: float,
+        range_max: float,
         now: float,
     ) -> Optional[VisitorCandidate]:
         """Process one scan; return the visitor to report, or None."""
@@ -98,7 +101,8 @@ class VisitorDetector:
         if self._scan_count % self._params.frame_skip_rate != 0:
             return None
 
-        candidate = self._best_candidate(ranges, angle_min, angle_increment, range_min)
+        candidate = self._best_candidate(
+            ranges, angle_min, angle_increment, range_min, range_max)
         if self._state is _State.IN_VISIT:
             return None
         if self._state is _State.WAITING_FOR_CLEAR:
@@ -137,7 +141,7 @@ class VisitorDetector:
         threshold = self._params.stability_threshold
         return len(self._history) == threshold and sum(self._history) >= threshold - 2
 
-    def _best_candidate(self, ranges, angle_min, angle_increment, range_min):
+    def _best_candidate(self, ranges, angle_min, angle_increment, range_min, range_max):
         ranges = np.asarray(ranges, dtype=float)
         angles = angle_min + np.arange(len(ranges)) * angle_increment
         # angle relative to the robot heading, wrapped to [-pi, pi]
@@ -149,6 +153,7 @@ class VisitorDetector:
         mask = (
             np.isfinite(ranges)
             & (ranges >= range_min)
+            & (ranges <= range_max)
             & (np.abs(relative) <= half_window)
         )
         order = np.argsort(relative[mask])
@@ -163,6 +168,8 @@ class VisitorDetector:
 
     def _score(self, ranges: np.ndarray, angles: np.ndarray) -> Optional[VisitorCandidate]:
         p = self._params
+        if len(ranges) < MIN_CLUSTER_POINTS:
+            return None
         distance = float(np.mean(ranges))
         if not p.min_distance <= distance <= p.max_distance:
             return None

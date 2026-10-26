@@ -80,7 +80,8 @@ class VisitorDetectorNode(Node):
 
     def _on_scan(self, msg: LaserScan) -> None:
         visitor = self._detector.process_scan(
-            msg.ranges, msg.angle_min, msg.angle_increment, msg.range_min, self._now())
+            msg.ranges, msg.angle_min, msg.angle_increment, msg.range_min, msg.range_max,
+            self._now())
         if visitor is not None:
             self._start_visit(visitor)
 

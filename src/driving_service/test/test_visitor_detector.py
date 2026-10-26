@@ -12,6 +12,7 @@ ANGLE_MIN = -math.pi + 0.0175
 ANGLE_INCREMENT = 2 * math.pi / 720
 NUM_POINTS = 720
 RANGE_MIN = 0.15
+RANGE_MAX = 12.0
 FRONT = -math.pi / 2
 
 
@@ -49,6 +50,14 @@ def add_object(ranges, distance, angle, width, front=FRONT):
     return ranges
 
 
+def add_points(ranges, distance, count):
+    """Put count neighboring readings at distance, straight ahead."""
+    first = round((FRONT - ANGLE_MIN) / ANGLE_INCREMENT)
+    for i in range(first, first + count):
+        ranges[i] = distance
+    return ranges
+
+
 def scan_with_person(distance=1.2, angle=0.0, width=0.5):
     return add_object(empty_ranges(), distance, angle, width)
 
@@ -69,7 +78,7 @@ def feed(detector, clock, ranges, scans):
     reported = []
     for _ in range(scans):
         visitor = detector.process_scan(
-            ranges, ANGLE_MIN, ANGLE_INCREMENT, RANGE_MIN, clock.tick())
+            ranges, ANGLE_MIN, ANGLE_INCREMENT, RANGE_MIN, RANGE_MAX, clock.tick())
         if visitor is not None:
             reported.append(visitor)
     return reported
@@ -302,6 +311,31 @@ def test_readings_below_the_sensor_minimum_are_ignored():
 
     assert len(reported) == 1
     assert reported[0].distance == pytest.approx(1.2, abs=0.05)
+
+
+def test_readings_above_the_sensor_maximum_are_ignored():
+    detector = VisitorDetector(make_params())
+    clock = Clock()
+    ranges = scan_with_person(distance=1.2)
+    person = [i for i, r in enumerate(ranges) if math.isfinite(r)]
+    for i in person[1::4]:
+        ranges[i] = RANGE_MAX + 1.0  # no return, reported above range_max by some drivers
+
+    reported = feed(detector, clock, ranges, 10)
+
+    assert len(reported) == 1
+    assert reported[0].distance == pytest.approx(1.2, abs=0.05)
+
+
+@pytest.mark.parametrize('points, reports', [(2, 0), (3, 1)])
+def test_cluster_needs_three_points_even_when_its_width_fits(points, reports):
+    detector = VisitorDetector(make_params(
+        person_width_min=0.001, person_width_max=0.05, min_confidence=0.0))
+    clock = Clock()
+
+    reported = feed(detector, clock, add_points(empty_ranges(), 1.2, points), 10)
+
+    assert len(reported) == reports
 
 
 def test_object_narrower_than_a_person_is_not_reported_even_without_confidence_threshold():
