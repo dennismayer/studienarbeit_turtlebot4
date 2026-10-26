@@ -515,53 +515,73 @@ def test_goal_on_nav2_is_kept_when_a_crashed_copy_leaves_the_graph(harness):
 
 
 def run_navigator_and_ctrl_c(accept_delay, sigint_when, results=None, outcomes=('hold',),
-                             params=(), received=None):
+                             params=(), received=None, nav2_mode='running', sig=signal.SIGINT,
+                             next_goal=None, sigint_ignored=False):
     """
-    Run the navigator as a process, Ctrl-C it during a drive; True if Nav2 saw a cancel.
+    Run the navigator as a process, signal it during a drive; True if Nav2 saw a cancel.
 
-    The MoveToLocation result response, if any arrives, is appended to results,
-    the poses Nav2 got are copied to received.
+    nav2_mode: 'running' (fake Nav2), 'silent' (in the graph, never answers) or
+    'absent'. The MoveToLocation result response, if any arrives, is appended to
+    results, the poses Nav2 got are copied to received. With next_goal (a list),
+    the client sends its next goal as soon as the first result arrives, like a main
+    loop driving back, and appends whether it was accepted.
     """
     prefix = '/test_' + uuid.uuid4().hex[:8]
-    nav2 = FakeNav2(prefix + '/navigate_to_pose', outcomes)
-    nav2.accept_delays = [accept_delay] if accept_delay else []
+    nav2 = None if nav2_mode == 'absent' else FakeNav2(prefix + '/navigate_to_pose', outcomes)
+    if nav2 is not None:
+        nav2.accept_delays = [accept_delay] if accept_delay else []
     client_node = Node('test_client_' + uuid.uuid4().hex[:8])
     client = ActionClient(client_node, MoveToLocation, prefix + '/moveToLocation')
     executor = MultiThreadedExecutor()
-    executor.add_node(nav2)
+    if nav2_mode == 'running':
+        executor.add_node(nav2)
     executor.add_node(client_node)
     threading.Thread(target=executor.spin, daemon=True).start()
+
+    def ignore_sigint():
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
     navigator = subprocess.Popen(
         [sys.executable, '-m', 'driving_service.navigator_node', '--ros-args',
          '-p', f'action_name:={prefix}/moveToLocation',
          '-p', f'nav2_action:={prefix}/navigate_to_pose', *params],
-        env={**os.environ, 'ROS_DOMAIN_ID': str(TEST_DOMAIN_ID)})
+        env={**os.environ, 'ROS_DOMAIN_ID': str(TEST_DOMAIN_ID)},
+        preexec_fn=ignore_sigint if sigint_ignored else None)
+
+    def on_result(response):
+        if results is not None:
+            results.append(response.result())
+        if next_goal is not None:
+            client.send_goal_async(MoveToLocation.Goal(x=0.0, y=0.0)).add_done_callback(
+                lambda f: next_goal.append(f.result().accepted))
+
     try:
         assert client.wait_for_server(timeout_sec=TIMEOUT)
         # Fast DDS: a request sent right after discovery can have its response dropped
         # ("client will not receive response"), give the response path a moment to match
         time.sleep(3.0)
         send_future = client.send_goal_async(MoveToLocation.Goal(x=1.0, y=1.0))
-        if results is not None:
-            send_future.add_done_callback(
-                lambda f: f.result().get_result_async().add_done_callback(
-                    lambda r: results.append(r.result())))
+        send_future.add_done_callback(
+            lambda f: f.result().get_result_async().add_done_callback(on_result))
         sigint_when(nav2)
         assert send_future.done(), 'accept response lost (Fast DDS), the test proves nothing'
 
-        navigator.send_signal(signal.SIGINT)
+        navigator.send_signal(sig)
 
-        canceled = wait_until(lambda: nav2.canceled.is_set(), timeout=5.0)
+        canceled = nav2 is not None and wait_until(lambda: nav2.canceled.is_set(), timeout=5.0)
         assert navigator.wait(timeout=TIMEOUT) is not None
         if results is not None:
             wait_until(lambda: results, timeout=2.0)
-        if received is not None:
+        if next_goal is not None:
+            wait_until(lambda: next_goal, timeout=2.0)
+        if received is not None and nav2 is not None:
             received.extend(nav2.received)
         return canceled
     finally:
         if navigator.poll() is None:
             navigator.kill()
-        nav2.released.set()
+        if nav2 is not None:
+            nav2.released.set()
         rclpy.try_shutdown()
         executor.shutdown()
 
@@ -621,3 +641,63 @@ def test_ctrl_c_during_the_last_attempt_ends_the_goal_as_shutting_down():
 
     assert [(r.status, r.result.message) for r in results] == [
         (GoalStatus.STATUS_ABORTED, 'Navigator shutting down')]
+
+
+def test_ctrl_c_while_waiting_for_an_absent_nav2_ends_the_goal_as_shutting_down():
+    results = []
+    run_navigator_and_ctrl_c(
+        accept_delay=0.0, sigint_when=lambda _nav2: time.sleep(1.5), results=results,
+        nav2_mode='absent', params=('-p', 'nav2_server_timeout:=30.0'))
+
+    assert [(r.status, r.result.message) for r in results] == [
+        (GoalStatus.STATUS_ABORTED, 'Navigator shutting down')]
+
+
+def test_ctrl_c_while_waiting_for_nav2_to_answer_ends_the_goal_as_shutting_down():
+    results = []
+    run_navigator_and_ctrl_c(
+        accept_delay=0.0, sigint_when=lambda _nav2: time.sleep(1.5), results=results,
+        nav2_mode='silent',
+        # a single attempt: no later loop round may be what ends the goal
+        params=('-p', 'nav2_response_timeout:=30.0', '-p', 'nav_retry_attempts:=1'))
+
+    assert [(r.status, r.result.message) for r in results] == [
+        (GoalStatus.STATUS_ABORTED, 'Navigator shutting down')]
+
+
+def test_goal_sent_during_shutdown_is_rejected_and_never_reaches_nav2():
+    def while_driving(nav2):
+        assert wait_until(lambda: len(nav2.received) == 1, timeout=TIMEOUT)
+        time.sleep(0.5)
+
+    next_goal = []
+    received = []
+    run_navigator_and_ctrl_c(
+        accept_delay=0.0, sigint_when=while_driving, next_goal=next_goal,
+        outcomes=('hold', 'hold'), received=received)
+
+    assert next_goal in ([False], [])  # rejected, or nobody answered any more
+    assert len(received) == 1
+
+
+def test_sigterm_during_a_drive_cancels_the_nav2_goal_like_ctrl_c():
+    def while_driving(nav2):
+        assert wait_until(lambda: len(nav2.received) == 1, timeout=TIMEOUT)
+        time.sleep(0.5)
+
+    results = []
+    canceled = run_navigator_and_ctrl_c(
+        accept_delay=0.0, sigint_when=while_driving, results=results, sig=signal.SIGTERM)
+
+    assert canceled
+    assert [(r.status, r.result.message) for r in results] == [
+        (GoalStatus.STATUS_ABORTED, 'Navigator shutting down')]
+
+
+def test_ctrl_c_works_even_when_the_navigator_was_started_with_sigint_ignored():
+    def while_driving(nav2):
+        assert wait_until(lambda: len(nav2.received) == 1, timeout=TIMEOUT)
+        time.sleep(0.5)
+
+    assert run_navigator_and_ctrl_c(
+        accept_delay=0.0, sigint_when=while_driving, sigint_ignored=True)

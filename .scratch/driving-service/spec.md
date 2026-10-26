@@ -48,7 +48,7 @@ These two packages are agent-owned (see the exception in `AGENTS.md`).
 19. Canceling while the Navigator still waits for the Nav2 server ends the goal as `"Canceled"`.
 20. Invalid parameters (e.g. `nav_retry_attempts` < 1, `stability_threshold` < 3, `lidar_frame_skip_rate` < 1, min ≥ max ranges, `min_confidence` outside 0..1) stop the node at startup with a clear error.
 21. MoveToLocation goals with a NaN or infinite coordinate are rejected.
-22. On Ctrl-C/SIGINT the Navigator cancels the running Nav2 goal before it exits (user decision 2026-10-25: Nav2 must not keep driving with nobody owning the goal), sends no new Nav2 goal, and ends the running MoveToLocation goal as aborted with `"Navigator shutting down"` so the client isn't left waiting.
+22. On Ctrl-C/SIGINT the Navigator cancels the running Nav2 goal before it exits (user decision 2026-10-25: Nav2 must not keep driving with nobody owning the goal), sends no new Nav2 goal, rejects goals that arrive during shutdown, and ends the running MoveToLocation goal as aborted with `"Navigator shutting down"` so the client isn't left waiting — also while it still waits for Nav2. SIGTERM (what `ros2 launch` escalates to, what systemd sends) behaves like SIGINT, and SIGINT works even if it was ignored when the node started (QA report 3).
 
 ### Out of scope
 - The VisitorDetected server (the receptionist main loop in `receptionist_bot`) — the user writes it.
@@ -71,8 +71,11 @@ These two packages are agent-owned (see the exception in `AGENTS.md`).
 - QA report 2 (at 79244a7): Fails — new X2/X2v from the identity check; see `qa-report-2.md`. Fixed with the "server gone" rule above; Ctrl-C now also ends the client's goal (concern from report 2).
 - Open concerns from report 2, not changed: a dead Nav2 with no replacement ends as "Nav2 did not answer the goal request" (it still looks ready until it leaves the graph); a slow but alive receptionist gets a new request about every 6 s.
 
+- QA report 3 (at 98072da): Fails — two Ctrl-C paths of requirement 22; see `qa-report-3.md`. Fixed, plus the SIGTERM and ignored-SIGINT concerns. The signal handler only sets a flag: raising into `spin_once` could leave the rclpy executor marked as spinning.
+- Open concern from report 3, by design (requirement 18): after a receptionist crash and immediate respawn, a visitor in the next ~20 s isn't served, because the old visit counts as open until the dead copy leaves the graph.
+
 ### Next steps
-- Follow-up QA 3, then code review.
+- Follow-up QA 4, then code review.
 
 ### How to run
 - Gate: `colcon build --packages-select driving_interfaces driving_service && colcon test --packages-select driving_service && colcon test-result --test-result-base build/driving_service`

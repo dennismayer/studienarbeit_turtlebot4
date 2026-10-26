@@ -87,6 +87,9 @@ class NavigatorNode(Node):
                 raise ValueError(message)
 
     def _on_goal(self, goal):
+        if self._stopping.is_set():
+            self.get_logger().warning('Rejected goal: shutting down')
+            return GoalResponse.REJECT
         if not all(math.isfinite(v) for v in (goal.x, goal.y, goal.yaw)):
             self.get_logger().warning(f'Rejected goal with a non-finite coordinate: {goal}')
             return GoalResponse.REJECT
@@ -151,10 +154,10 @@ class NavigatorNode(Node):
                     goal_handle.canceled()
                     return result
                 if self._stopping.is_set():
-                    result.message = 'Navigator shutting down'
-                    goal_handle.abort()
-                    return result
+                    return self._end_as_stopping(goal_handle, result)
             if not self._wait_for_nav2(goal_handle, server_timeout):
+                if self._stopping.is_set():
+                    return self._end_as_stopping(goal_handle, result)
                 if goal_handle.is_cancel_requested:
                     result.message = 'Canceled'
                     goal_handle.canceled()
@@ -171,11 +174,14 @@ class NavigatorNode(Node):
                 feedback_callback=lambda msg, a=attempt: self._forward_feedback(
                     goal_handle, a, msg))
             self._send_future = send_future
-            nav_handle = self._wait(send_future, timeout=response_timeout)
+            nav_handle = self._wait(
+                send_future, timeout=response_timeout, give_up=self._stopping.is_set)
             self._send_future = None
             if nav_handle is None:
                 # the request or its answer got lost; never leave a late acceptance driving
                 send_future.add_done_callback(_cancel_if_accepted)
+                if self._stopping.is_set():
+                    return self._end_as_stopping(goal_handle, result)
                 result.message = 'Nav2 did not answer the goal request'
                 self.get_logger().warning(f'Attempt {attempt}/{max_attempts}: {result.message}')
                 continue
@@ -196,9 +202,7 @@ class NavigatorNode(Node):
                 goal_handle.canceled()
                 return result
             if self._stopping.is_set():
-                result.message = 'Navigator shutting down'
-                goal_handle.abort()
-                return result
+                return self._end_as_stopping(goal_handle, result)
             if nav_result is None:
                 result.message = 'Nav2 lost the goal (server stopped or restarted)'
                 self.get_logger().warning(f'Attempt {attempt}/{max_attempts}: {result.message}')
@@ -214,6 +218,11 @@ class NavigatorNode(Node):
         goal_handle.abort()
         return result
 
+    def _end_as_stopping(self, goal_handle, result):
+        result.message = 'Navigator shutting down'
+        goal_handle.abort()
+        return result
+
     def _forward_feedback(self, goal_handle, attempt, nav_feedback_msg):
         goal_handle.publish_feedback(MoveToLocation.Feedback(
             attempt=attempt,
@@ -224,6 +233,8 @@ class NavigatorNode(Node):
         deadline = time.monotonic() + timeout
         while not self._nav2.server_is_ready():
             if time.monotonic() >= deadline or goal_handle.is_cancel_requested:
+                return False
+            if self._stopping.is_set():
                 return False
             if not self.context.ok():
                 raise RuntimeError('Shutting down')
