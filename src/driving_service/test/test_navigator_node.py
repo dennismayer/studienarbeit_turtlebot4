@@ -258,7 +258,6 @@ def test_canceling_the_goal_cancels_the_nav2_goal(harness):
     h.nav2.feedback_distance = 3.0
     goal_handle = h.send(x=1.0, y=1.0)
     wait_until(lambda: len(h.feedback) == 1)
-    time.sleep(0.3)  # Nav2's goal handle has reached the navigator
 
     wait_for(goal_handle.cancel_goal_async())
     result_response = wait_for(goal_handle.get_result_async())
@@ -273,7 +272,7 @@ def test_cancel_that_arrives_before_nav2_accepted_still_cancels_the_nav2_goal(ha
     h = harness(outcomes=['hold'])
     h.nav2.accept_delay = 1.0
     goal_handle = h.send(x=1.0, y=1.0)
-    time.sleep(0.3)  # navigator is waiting for Nav2 to accept
+    wait_until(lambda: h.nav2.requests == 1)  # navigator is waiting for Nav2 to accept
 
     wait_for(goal_handle.cancel_goal_async())
     result_response = wait_for(goal_handle.get_result_async())
@@ -296,7 +295,8 @@ def test_cancel_during_the_retry_delay_ends_the_goal_without_another_attempt(har
     h = harness(outcomes=['abort', 'succeed'], nav_retry_delay=30.0)
     goal_handle = h.send(x=1.0, y=1.0)
     wait_until(lambda: len(h.nav2.received) == 1)
-    time.sleep(0.3)  # first attempt has failed, the delay is running
+    # aims the cancel at the retry delay; landing earlier ends the goal the same way
+    time.sleep(0.3)
 
     started = time.monotonic()
     wait_for(goal_handle.cancel_goal_async())
@@ -371,7 +371,7 @@ def test_shutdown_while_waiting_to_retry_does_not_hang(harness):
     h = harness(outcomes=['abort'], nav_retry_delay=30.0)
     h.send(x=1.0, y=1.0)
     wait_until(lambda: len(h.nav2.received) == 1)
-    time.sleep(0.3)
+    time.sleep(0.3)  # aims at the retry delay; landing earlier must not hang either
 
     assert shuts_down_within(h, 5.0)
 
@@ -381,7 +381,6 @@ def test_cancel_during_the_last_attempt_ends_as_canceled(harness):
     h.nav2.feedback_distance = 3.0
     goal_handle = h.send(x=1.0, y=1.0)
     wait_until(lambda: len(h.feedback) == 1)
-    time.sleep(0.3)
 
     wait_for(goal_handle.cancel_goal_async())
     result_response = wait_for(goal_handle.get_result_async())
@@ -479,7 +478,7 @@ def test_goal_with_a_non_finite_coordinate_is_rejected(harness, goal):
 def test_cancel_while_waiting_for_the_nav2_server_ends_as_canceled(harness):
     h = harness(nav2_running=False, nav2_server_timeout=5.0)
     goal_handle = h.send(x=1.0, y=1.0)
-    time.sleep(0.3)
+    time.sleep(0.3)  # aims at the wait for the server; landing earlier ends it the same way
 
     started = time.monotonic()
     wait_for(goal_handle.cancel_goal_async())
