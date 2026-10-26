@@ -18,58 +18,68 @@ from speaking_interfaces.action import AudioCreation
 from speaking_service.scripts.cache import FileCache
 from speaking_service.scripts.parameter_helper import get_param
 
+# default parameter in case no launch file is being used
+DEFAULT_NODE_NAME = "AudioCreationWorker"
+DEFAULT_NAMESPACE = "/AudioWorkers"
+
+
 class AudioCreationActionServer(Node):
+    """Action Server for synthesising audio"""
+    def __init__(self):        
+        super().__init__(DEFAULT_NODE_NAME, namespace=DEFAULT_NAMESPACE)
+        self._declare_node_parameter()
+        self._load_audio_voice()
+        self._set_node_variables()
+        self._start_server()
     
-    def __init__(self):
-        # default vars
-        node_name = "AudioCreationWorker"
-        node_namespace = "/AudioWorkers"
-        
-        super().__init__(node_name, namespace=node_namespace)
-        
-        # load parameters
+    def _declare_node_parameter(self) -> None:
+        """Loads parameters for AudioCreation Node"""
         self.declare_parameters('', [
             ("action_name", "audioCreation",
-             ParameterDescriptor(
-                 description="Action server name, resolved inside the node namespace", 
-                 read_only=True,
-                 type=ParameterType.PARAMETER_STRING)),
+                ParameterDescriptor(
+                    description="Action server name, resolved inside the node namespace", 
+                    read_only=True,
+                    type=ParameterType.PARAMETER_STRING)),
             ("voice_model_path", Parameter.Type.STRING,
-             ParameterDescriptor(
-                 description="Absolute path to the Piper voice model (.onnx)", 
-                 read_only=True,
-                 type=ParameterType.PARAMETER_STRING)),
+                ParameterDescriptor(
+                    description="Absolute path to the Piper voice model (.onnx)", 
+                    read_only=True,
+                    type=ParameterType.PARAMETER_STRING)),
             ("volume", 1.0,
-             ParameterDescriptor(
-                 description="Piper synthesis volume multiplier (1.0 = unchanged)", 
-                 read_only=True, 
-                 type=ParameterType.PARAMETER_DOUBLE,
-                 floating_point_range=[FloatingPointRange(from_value=0.0, to_value=1.0)])),
+                ParameterDescriptor(
+                    description="Piper synthesis volume multiplier (1.0 = unchanged)", 
+                    read_only=True, 
+                    type=ParameterType.PARAMETER_DOUBLE,
+                    floating_point_range=[FloatingPointRange(from_value=0.0, to_value=1.0)])),
             ("audio_cache_path", "speaking_service/audio_cache",
-             ParameterDescriptor(
-                 description="Audio cache directory, relative to $ROS_HOME", 
-                 read_only=True,
-                 type=ParameterType.PARAMETER_STRING)),
+                ParameterDescriptor(
+                    description="Audio cache directory, relative to $ROS_HOME", 
+                    read_only=True,
+                    type=ParameterType.PARAMETER_STRING)),
             ("voice_sample_rate", 22050,
-             ParameterDescriptor(
-                 description="Native sample rate of the voice model", 
-                 read_only=True,
-                 type=ParameterType.PARAMETER_INTEGER)),
+                ParameterDescriptor(
+                    description="Native sample rate of the voice model", 
+                    read_only=True,
+                    type=ParameterType.PARAMETER_INTEGER)),
             ("voice_channels", 1,
-             ParameterDescriptor(
-                 description="Native channel count of the voice model", 
-                 read_only=True,
-                 type=ParameterType.PARAMETER_INTEGER)),
+                ParameterDescriptor(
+                    description="Native channel count of the voice model", 
+                    read_only=True,
+                    type=ParameterType.PARAMETER_INTEGER)),
         ])
-        
+    
+    def _load_audio_voice(self) -> None:
+        """Loads voice for synthesising"""
         try:
-            # load voice 
+            # loads voice defined in config
             self.__voice = PiperVoice.load(get_param(self, "voice_model_path", str))
             self.get_logger().info("Voice loaded!")
         except Exception as e:
             self.get_logger().error(f"Error while loading voice: {e}")
             raise RuntimeError(f"Error while loading voice: {e}")
-            
+    
+    def _set_node_variables(self) -> None:
+        """Reads the config parameters and directory location"""
         ros_home = Path(os.environ.get('ROS_HOME', Path.home() / '.ros'))
         self.__audio_dir = ros_home / get_param(self, "audio_cache_path", str)
         self.__audio_dir.mkdir(parents=True, exist_ok=True)
@@ -77,7 +87,10 @@ class AudioCreationActionServer(Node):
         self.__sr = get_param(self, "voice_sample_rate", int)
         self.__ch = get_param(self, "voice_channels", int)
         self.__volume = get_param(self, "volume", float)
-                
+        
+        self.get_logger().info("Parameters loaded!")
+    
+    def _start_server(self) -> None:
         # Start the server
         self.get_logger().info("Starting Server ...")
         # using a Reentrant Callback Group because audio creation can be done in parallel 
@@ -101,48 +114,60 @@ class AudioCreationActionServer(Node):
             request: AudioCreation.Goal = goal_handle.request
             self.get_logger().info(f"Text to Transform: {request.text}")
             
-            # abort if text is empty
+            # check for empty text string
             if not request.text or request.text.strip() == "":
                 self.get_logger().error("Text is empty!")
                 goal_handle.abort()
-                return self.assemble_result(False, "TextIsEmpty", "", 0.0)
-            
+                return self._assemble_result(False, "TextIsEmpty", "", 0.0)
+
+            # declaring Synthesis parameters and defining model
             self.get_logger().info("Start TTS...")
             chunks = self.__voice.synthesize(request.text, syn_config=SynthesisConfig(volume=self.__volume))
             
+            # creating temporary output file in case that the node crashes during creation
             file_path = self.__audio_dir / f'{FileCache.get_hash(request.text)}.wav.tmp'
             self.get_logger().info(f"SR: {self.__sr} Channels: {self.__ch} FilePath: {file_path}")
-              
+            
+            # writing generated audio into file
             with sf.SoundFile(file_path, mode="w", samplerate=self.__sr, channels=self.__ch, format="wav") as f:
                 for chunk in chunks:
                     if goal_handle.is_cancel_requested:
                         self.get_logger().info("Canceling...")
                         goal_handle.canceled()
-                        return self.assemble_result(False, "Canceled", "", 0.0)
+                        return self._assemble_result(False, "Canceled", "", 0.0)
                     
                     f.write(chunk.audio_float_array)
                 duration = len(f)/(self.__sr)
             
+            # checks if the result contains any audio
             if duration == 0.0:
                 self.get_logger().info("FileIsEmpty")
                 goal_handle.abort()
-                return self.assemble_result(False, "FileIsEmpty", "", 0.0)
+                return self._assemble_result(False, "FileIsEmpty", "", 0.0)
             
             self.get_logger().info("Finished Synthesis!")
+            
+            # removes the .tmp ending as file creation is completed
             os.replace(file_path, file_path.with_suffix(""))
+            
+            # only when all the steps succeed set the flag for deleting files to False
             delete_file = False
+            
+            # return result
             goal_handle.succeed()
-            return self.assemble_result(True, "Success", str(file_path.with_suffix("")), duration)
+            return self._assemble_result(True, "Success", str(file_path.with_suffix("")), duration)
 
         except Exception as e:
             self.get_logger().error(f"Error while executing callback: {e}")
             goal_handle.abort()
-            return self.assemble_result(False, f"Error while executing callback: {e}", "", 0.0)
+            return self._assemble_result(False, f"Error while executing callback: {e}", "", 0.0)
         finally:
+            # checks if file needs to be deleted
             if file_path and delete_file:
                 file_path.unlink(missing_ok=True)
     
-    def assemble_result(self, success: bool, message: str, file_path: str, duration: float):
+    def _assemble_result(self, success: bool, message: str, file_path: str, duration: float):
+        """Assembles a result message"""
         result = AudioCreation.Result()
         result.success = success
         result.message = message
@@ -151,6 +176,7 @@ class AudioCreationActionServer(Node):
         return result
 
 def main(args=None):
+    """entry point. Node is added to executer. In case of error it will return with an error code so that a restart can be tried"""
     rclpy.init(args=args)
 
     audio_creation_action_server = None

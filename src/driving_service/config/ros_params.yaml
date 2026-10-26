@@ -1,0 +1,80 @@
+# Default parameters for the driving_service nodes.
+# Created with Claude (Anthropic) on the basis of the car_museum_guide package.
+#
+# Top-level keys are fully qualified node names. Node names are set in the
+# launch file and must match the keys below.
+
+# ---------------------------------------------------------------------------
+# Navigator: MoveToLocation action server on top of Nav2
+# ---------------------------------------------------------------------------
+/Navigator:
+  ros__parameters:
+    # Name of the MoveToLocation action server.
+    action_name: "moveToLocation"
+
+    # Nav2's NavigateToPose action server (bt_navigator).
+    nav2_action: "navigate_to_pose"
+
+    # Nav2 attempts per goal, including the first one.
+    nav_retry_attempts: 3
+
+    # Seconds to wait before retrying a failed Nav2 goal.
+    nav_retry_delay: 5.0
+
+    # Seconds to wait for the Nav2 action server per goal; the goal fails
+    # with "Nav2Unavailable" after that.
+    nav2_server_timeout: 5.0
+
+    # Seconds to wait for Nav2 to accept or reject a goal. Right after a Nav2
+    # restart a goal request can get lost; it then counts as a failed attempt
+    # (a late acceptance is canceled right away).
+    nav2_response_timeout: 5.0
+
+# ---------------------------------------------------------------------------
+# VisitorDetector: LiDAR clustering, sends VisitorDetected goals
+# ---------------------------------------------------------------------------
+/VisitorDetector:
+  ros__parameters:
+    # VisitorDetected action server, served by the receptionist main loop.
+    action_name: "visitorDetected"
+
+    # LaserScan topic of the LiDAR.
+    scan_topic: "/scan"
+
+    # Seconds to wait for the receptionist to accept or reject a visitor; no
+    # answer counts as a visit that never started (a late acceptance is canceled).
+    receptionist_response_timeout: 5.0
+
+    # Scan angle in radians that points straight ahead of the robot.
+    # The TurtleBot4 mounts the RPLIDAR rotated +90 degrees (base_link ->
+    # rplidar_link yaw = pi/2), so straight ahead is -pi/2 in the scan.
+    lidar_front_angle: -1.5707963
+
+    # Width of the front window in degrees, centered on lidar_front_angle.
+    detection_angle_range: 60.0
+
+    # Mean distance of a visitor cluster in meters.
+    detection_distance_min: 0.8
+    detection_distance_max: 2.5
+
+    # Width of a cluster that counts as a person in meters.
+    person_width_min: 0.35
+    person_width_max: 0.7
+
+    # Lowest confidence (0..1) of a visitor candidate. The confidence weighs
+    # how close the width is to the middle of the person range, how close the
+    # cluster is, and how many points it has.
+    min_confidence: 0.75
+
+    # Stability window in processed scans; stability_threshold - 2 of them
+    # need a candidate before a visit starts.
+    stability_threshold: 8
+
+    # Process only every n-th scan (the RPLIDAR publishes about 7.5 Hz).
+    lidar_frame_skip_rate: 3
+
+    # After a visit: seconds without any candidate before the cooldown starts.
+    visitor_timeout: 10.0
+
+    # Seconds after that during which scans are ignored.
+    cooldown_period: 5.0
