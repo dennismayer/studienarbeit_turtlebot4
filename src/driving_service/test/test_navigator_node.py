@@ -33,6 +33,7 @@ class FakeNav2(SpinsAlone, Node):
         self._executor = None  # a fake that is never spun answers nothing, like a crashed one
         self.outcomes = list(outcomes)
         self.received = []
+        self.requests = 0  # goal requests, counted before they are answered
         self.canceled = threading.Event()
         self.released = threading.Event()
         self.feedback_distance = None
@@ -53,6 +54,7 @@ class FakeNav2(SpinsAlone, Node):
         self.stop()
 
     def _on_goal(self, goal):
+        self.requests += 1
         if self.accept_delays:
             # rclpy hands goal_callback and execute the same request object
             self._answered_late.add(id(goal))
@@ -101,7 +103,8 @@ class FakeNav2(SpinsAlone, Node):
 class Harness:
     """Navigator, fake Nav2 and a MoveToLocation client spinning in one executor."""
 
-    def __init__(self, outcomes=(), nav2_running=True, **params):
+    def __init__(self, outcomes=(), nav2_running=True, navigator_class=NavigatorNode,
+                 spin_navigator=True, **params):
         prefix = '/test_' + uuid.uuid4().hex[:8]
         nav2_action = prefix + '/navigate_to_pose'
         self._nav2_action = nav2_action
@@ -117,7 +120,7 @@ class Harness:
             'nav2_response_timeout': 2.0,
         }
         overrides.update(params)
-        self.navigator = NavigatorNode(parameter_overrides=[
+        self.navigator = navigator_class(parameter_overrides=[
             Parameter(name, value=value) for name, value in overrides.items()])
         self.nav2 = FakeNav2(nav2_action, outcomes).spin_in_background() if nav2_running else None
         self.client_node = Node('test_client_' + uuid.uuid4().hex[:8])
@@ -125,7 +128,9 @@ class Harness:
         self.feedback = []
 
         self.executor = MultiThreadedExecutor()
-        self.executor.add_node(self.navigator)
+        # unspun, the test spins the navigator itself like the main loop of run_node
+        self.navigator_executor = self.executor if spin_navigator else MultiThreadedExecutor()
+        self.navigator_executor.add_node(self.navigator)
         self.executor.add_node(self.client_node)
         self._thread = threading.Thread(target=self.executor.spin, daemon=True)
         self._thread.start()
@@ -155,6 +160,13 @@ class Harness:
         assert goal_handle.accepted
         return wait_for(goal_handle.get_result_async()).result
 
+    def spin_navigator_until(self, condition):
+        """Spin an unspun navigator like the main loop of run_node until condition()."""
+        deadline = time.monotonic() + TIMEOUT
+        while not condition():
+            assert time.monotonic() < deadline, 'timed out'
+            self.navigator_executor.spin_once(timeout_sec=0.1)
+
     def _on_feedback(self, msg):
         self.feedback.append(msg.feedback)
 
@@ -163,6 +175,7 @@ class Harness:
             self.nav2.released.set()  # held goals must not block the teardown
         rclpy.try_shutdown()  # lets a navigator that waits on Nav2 give up
         self.executor.shutdown()
+        self.navigator_executor.shutdown()
         for fake in (self.nav2, *self._stopped_nav2):
             if fake is not None:
                 fake.close()
@@ -375,6 +388,66 @@ def test_cancel_during_the_last_attempt_ends_as_canceled(harness):
 
     assert result_response.status == GoalStatus.STATUS_CANCELED
     assert result_response.result.message == 'Canceled'
+
+
+@pytest.mark.parametrize('nav2_answer', ['reject', 'none'])
+def test_cancel_while_nav2_decides_on_the_last_attempt_ends_as_canceled(harness, nav2_answer):
+    h = harness(nav_retry_attempts=1)
+    if nav2_answer == 'reject':
+        h.nav2.accept_delay = 1.0
+        h.nav2.goals_to_reject = 1
+    else:
+        h.nav2.accept_delays = [3.0]  # beyond nav2_response_timeout
+    goal_handle = h.send(x=1.0, y=1.0)
+    wait_until(lambda: h.nav2.requests == 1)
+
+    wait_for(goal_handle.cancel_goal_async())
+    result_response = wait_for(goal_handle.get_result_async())
+
+    assert result_response.status == GoalStatus.STATUS_CANCELED
+    assert result_response.result.message == 'Canceled'
+
+
+class StopsWhenAccepting(NavigatorNode):
+    """Navigator that gets Ctrl-C in the spin step that accepts a goal."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.stop_requested = threading.Event()
+
+    def _on_goal(self, goal):
+        response = super()._on_goal(goal)
+        self.stop_requested.set()
+        return response
+
+
+def test_ctrl_c_in_the_spin_step_that_accepts_the_goal_leaves_no_nav2_goal_driving(harness):
+    h = harness(outcomes=['hold'], navigator_class=StopsWhenAccepting, spin_navigator=False)
+    h.client.send_goal_async(MoveToLocation.Goal(x=1.0, y=1.0))
+    h.spin_navigator_until(h.navigator.stop_requested.is_set)
+
+    h.navigator.stop(h.navigator_executor)
+
+    assert not h.nav2.received or h.nav2.canceled.is_set()
+
+
+def test_cancel_wins_over_a_ctrl_c_that_comes_after_it(harness):
+    h = harness(spin_navigator=False, nav2_response_timeout=5.0)
+    h.nav2.accept_delays = [1.0]  # both arrive while Nav2 decides
+    send_future = h.client.send_goal_async(MoveToLocation.Goal(x=1.0, y=1.0))
+    h.spin_navigator_until(send_future.done)
+    goal_handle = send_future.result()
+    h.spin_navigator_until(lambda: h.nav2.requests == 1)
+    cancel_future = goal_handle.cancel_goal_async()
+    h.spin_navigator_until(cancel_future.done)
+    result_future = goal_handle.get_result_async()
+
+    h.navigator.stop(h.navigator_executor)
+    result_response = wait_for(result_future)
+
+    assert result_response.status == GoalStatus.STATUS_CANCELED
+    assert result_response.result.message == 'Canceled'
+    assert h.nav2.canceled.is_set()
 
 
 @pytest.mark.parametrize('bad', [

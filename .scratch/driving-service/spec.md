@@ -45,10 +45,10 @@ These two packages are agent-owned (see the exception in `AGENTS.md`).
     - "Server gone" means every server endpoint that was in the graph when the goal was sent has left it. A crashed copy can linger in the graph for ~20 s after kill -9; it leaving while the live server stays does not count (QA report 2, X2/X2v).
     - Navigator: a Nav2 goal request that gets no answer within `nav2_response_timeout` is a failed attempt (a late acceptance is canceled right away); a Nav2 server that is gone while a goal runs fails that attempt; before each attempt the Nav2 server must be available, else the goal fails with `"Nav2Unavailable"`.
     - Detector: a VisitorDetected goal request with no answer within `receptionist_response_timeout` counts as a visit that never started (a late acceptance is canceled right away); a receptionist that is gone during a Visit ends the Visit (re-arm as in 16).
-19. Canceling while the Navigator still waits for the Nav2 server ends the goal as `"Canceled"`.
+19. Canceling ends the goal as `"Canceled"` at every stage: also while the Navigator still waits for the Nav2 server or for Nav2's answer, and on the last attempt (code review AD2).
 20. Invalid parameters (e.g. `nav_retry_attempts` < 1, `stability_threshold` < 3, `lidar_frame_skip_rate` < 1, min ≥ max ranges, `min_confidence` outside 0..1) stop the node at startup with a clear error.
 21. MoveToLocation goals with a NaN or infinite coordinate are rejected.
-22. On Ctrl-C/SIGINT the Navigator cancels the running Nav2 goal before it exits (user decision 2026-10-25: Nav2 must not keep driving with nobody owning the goal), sends no new Nav2 goal, rejects goals that arrive during shutdown, and ends the running MoveToLocation goal as aborted with `"Navigator shutting down"` so the client isn't left waiting — also while it still waits for Nav2. SIGTERM (what `ros2 launch` escalates to, what systemd sends) behaves like SIGINT, and SIGINT works even if it was ignored when the node started (QA report 3).
+22. On Ctrl-C/SIGINT the Navigator cancels the running Nav2 goal before it exits (user decision 2026-10-25: Nav2 must not keep driving with nobody owning the goal), sends no new Nav2 goal, rejects goals that arrive during shutdown, and ends the running MoveToLocation goal as aborted with `"Navigator shutting down"` so the client isn't left waiting — also while it still waits for Nav2. A cancel requested before Ctrl-C wins: the goal ends as `"Canceled"` (code review ST4). Ctrl-C in any spin step, also the one that accepts the goal, leaves no Nav2 goal driving (code review AD1). SIGTERM (what `ros2 launch` escalates to, what systemd sends) behaves like SIGINT, and SIGINT works even if it was ignored when the node started (QA report 3).
 
 ### Out of scope
 - The VisitorDetected server (the receptionist main loop in `receptionist_bot`) — the user writes it.
@@ -82,6 +82,9 @@ These two packages are agent-owned (see the exception in `AGENTS.md`).
 
 - Code review (since 371feb3, at bf59d53): **Ready with fixes**. Findings AD1 (P1), AD2, SP1–SP4, ST1–ST9; dispositions below.
 - User decision 2026-10-26 on ST1 (snake_case node modules vs CamelCase in speaking_service): **O2, rename the node modules to CamelCase** (`NavigatorNode.py`, `VisitorDetectorNode.py`) to match speaking_service; helper modules stay lowercase like speaking_service's `scripts/cache.py`.
+- Review fixes, structural (refactor:, 56e5080..bffbe2f): ST1 CamelCase modules; ST2–ST6 shared `params` / `action_peer` helpers and `VisitorCandidate`; ST3/ST7 shared test tools, no test-only node methods.
+- Review fixes, behavior (test-first, mutation-checked): AD1/SP3 and AD2/SP4 and ST4 — `_drive` sees every Nav2 request it sent through to the end (waits for the answer, at most `STOP_PENDING_MAX` after Ctrl-C, and cancels an acceptance; forwards a cancel or Ctrl-C while it waits for the result), and every unreached goal ends in `_end_unreached`, where a cancel wins over Ctrl-C. `stop()` no longer reads a pending request, so its old survivor is gone. SP1 `MIN_CLUSTER_POINTS = 3`; SP2 readings above `range_max` are ignored; ST8 process-level test of invalid parameters. 7 Navigator and 4 detector mutants, all caught by the intended tests.
+- Flake fixed: the late-acceptance retry test had 0.5 s of margin; under suite load a starved wait thread took the late answer as in time (da00389).
 
 ### Next steps
 - Fix the review findings (structural first as refactor:, then behavior test-first), follow-up QA and review.
