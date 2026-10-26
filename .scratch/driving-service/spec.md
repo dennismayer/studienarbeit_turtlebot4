@@ -74,12 +74,14 @@ These two packages are agent-owned (see the exception in `AGENTS.md`).
 - QA report 3 (at 98072da): Fails — two Ctrl-C paths of requirement 22; see `qa-report-3.md`. Fixed, plus the SIGTERM and ignored-SIGINT concerns. The signal handler only sets a flag: raising into `spin_once` could leave the rclpy executor marked as spinning.
 - Open concern from report 3, by design (requirement 18): after a receptionist crash and immediate respawn, a visitor in the next ~20 s isn't served, because the old visit counts as open until the dead copy leaves the graph.
 
-- QA report 4 (at 79fb9b9): Fails on one edge (X_late45): a Nav2 acceptance arriving after the Navigator exited but within `nav2_response_timeout` was never canceled. Fixed: on Ctrl-C the Navigator waits for a pending answer until the response timeout would have run out, at most 5 s (ros2 launch kills after 10 s). Known limit: with `nav2_response_timeout` set above 5 s, an acceptance later than 5 s after Ctrl-C is still orphaned.
+- QA report 4 (at 79fb9b9): Fails on one edge (X_late45): a Nav2 acceptance arriving after the Navigator exited but within `nav2_response_timeout` was never canceled. Fixed: on Ctrl-C the Navigator waits for a pending answer until the response timeout would have run out, at most 5 s (ros2 launch kills after 10 s). Known limit: an acceptance arriving after the Navigator process has exited can't be canceled by it any more — i.e. one later than `nav2_response_timeout` after the request (QA report 5, X_late55), or, with `nav2_response_timeout` set above 5 s, one later than 5 s after Ctrl-C. A real Nav2 answers within milliseconds.
 - Survivor (kept): `stop()` reads the pending request before setting the stop flag; the other order is a microsecond race no test can hit reliably.
 - Concerns from report 4, outside this package: SIGTERM to the `ros2 launch` process itself kills only launch and leaves the nodes running (stop with Ctrl-C, or signal the nodes / the whole service); SIGINT during Python import prints a harmless traceback.
 
+- QA report 5 (at a33f82d): **Passes** — see `qa-report-5.md`; its one concern (X_late55) is the known limit above.
+
 ### Next steps
-- Follow-up QA 5, then code review.
+- Code review since 371feb3 with this spec.
 
 ### How to run
 - Gate: `colcon build --packages-select driving_interfaces driving_service && colcon test --packages-select driving_service && colcon test-result --test-result-base build/driving_service`
