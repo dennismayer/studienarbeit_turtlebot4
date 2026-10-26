@@ -10,6 +10,7 @@ from enum import Enum
 import math
 from typing import List, Optional, Sequence
 
+from driving_service.params import check
 import numpy as np
 
 # neighboring points further apart than this start a new cluster
@@ -42,7 +43,7 @@ class DetectionParams:
 
     def __post_init__(self):
         """Reject values the detector cannot work with."""
-        checks = [
+        check([
             (self.min_distance < self.max_distance,
              'detection_distance_min must be < detection_distance_max'),
             (0.0 < self.angle_range <= 360.0, 'detection_angle_range must be within (0, 360]'),
@@ -53,15 +54,12 @@ class DetectionParams:
             (self.cooldown_period >= 0.0, 'cooldown_period must be >= 0'),
             (0.0 <= self.min_confidence <= 1.0, 'min_confidence must be within 0..1'),
             (self.frame_skip_rate >= 1, 'lidar_frame_skip_rate must be >= 1'),
-        ]
-        for ok, message in checks:
-            if not ok:
-                raise ValueError(message)
+        ])
 
 
 @dataclass(frozen=True)
-class Visitor:
-    """A person-like cluster in front of the robot."""
+class VisitorCandidate:
+    """A person-like cluster in front of the robot; reported once it is stable."""
 
     distance: float
     angle: float
@@ -81,7 +79,7 @@ class VisitorDetector:
     def __init__(self, params: DetectionParams):
         self._params = params
         self._history: deque = deque(maxlen=params.stability_threshold)
-        self._latest: Optional[Visitor] = None
+        self._latest: Optional[VisitorCandidate] = None
         self._state = _State.ARMED
         self._scan_count = 0
         self._last_seen = 0.0
@@ -94,7 +92,7 @@ class VisitorDetector:
         angle_increment: float,
         range_min: float,
         now: float,
-    ) -> Optional[Visitor]:
+    ) -> Optional[VisitorCandidate]:
         """Process one scan; return the visitor to report, or None."""
         self._scan_count += 1
         if self._scan_count % self._params.frame_skip_rate != 0:
@@ -163,7 +161,7 @@ class VisitorDetector:
                 best = candidate
         return best
 
-    def _score(self, ranges: np.ndarray, angles: np.ndarray) -> Optional[Visitor]:
+    def _score(self, ranges: np.ndarray, angles: np.ndarray) -> Optional[VisitorCandidate]:
         p = self._params
         distance = float(np.mean(ranges))
         if not p.min_distance <= distance <= p.max_distance:
@@ -187,7 +185,8 @@ class VisitorDetector:
         )
         if confidence < p.min_confidence:
             return None
-        return Visitor(distance=distance, angle=float(np.mean(angles)), confidence=confidence)
+        return VisitorCandidate(
+            distance=distance, angle=float(np.mean(angles)), confidence=confidence)
 
 
 def _clusters(ranges: np.ndarray, angles: np.ndarray) -> List:

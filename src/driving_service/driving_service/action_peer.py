@@ -1,10 +1,29 @@
 """
-Tell whether the server behind an action client is still the same one.
+Dealing with the action server on the other side: is it still there, late answers.
 
 Created with Claude (Anthropic) on the basis of the car_museum_guide package.
 """
 
+from dataclasses import dataclass
+
 from rclpy.node import Node
+
+# seconds between checks whether the peer is still the server that got the goal
+PEER_CHECK_PERIOD = 0.5
+
+
+@dataclass
+class PendingRequest:
+    """A goal request the server hasn't answered yet."""
+
+    future: object  # future of send_goal_async
+    deadline: float  # when we stop waiting for the answer
+
+
+def cancel_if_accepted(goal_handle) -> None:
+    """Cancel a goal that was accepted after we stopped waiting for it."""
+    if goal_handle is not None and goal_handle.accepted:
+        goal_handle.cancel_goal_async()
 
 
 def server_identity(node: Node, action_name: str) -> frozenset:

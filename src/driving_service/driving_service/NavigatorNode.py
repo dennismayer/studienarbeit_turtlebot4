@@ -11,18 +11,17 @@ import time
 
 from action_msgs.msg import GoalStatus
 from driving_interfaces.action import MoveToLocation
-from driving_service.action_peer import server_gone, server_identity
+from driving_service.action_peer import (
+    cancel_if_accepted, PEER_CHECK_PERIOD, PendingRequest, server_gone, server_identity)
+from driving_service.params import check, declare_read_only, value
 from driving_service.run_node import run
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
-from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 
 
-# seconds between checks whether Nav2 is still the server that got the goal
-PEER_CHECK_PERIOD = 0.5
 # seconds Ctrl-C waits for Nav2 to confirm the cancel of the running goal
 STOP_CANCEL_TIMEOUT = 2.0
 # longest Ctrl-C waits for Nav2 to answer a goal request that is still pending
@@ -36,58 +35,38 @@ class NavigatorNode(Node):
 
     def __init__(self, **kwargs):
         super().__init__('Navigator', **kwargs)
-        self.declare_parameters('', [
-            ('action_name', 'moveToLocation', ParameterDescriptor(
-                description='Name of the MoveToLocation action server',
-                read_only=True, type=ParameterType.PARAMETER_STRING)),
-            ('nav2_action', 'navigate_to_pose', ParameterDescriptor(
-                description="Name of Nav2's NavigateToPose action server",
-                read_only=True, type=ParameterType.PARAMETER_STRING)),
-            ('nav_retry_attempts', 3, ParameterDescriptor(
-                description='Nav2 attempts per goal, including the first one',
-                read_only=True, type=ParameterType.PARAMETER_INTEGER)),
-            ('nav_retry_delay', 5.0, ParameterDescriptor(
-                description='Seconds to wait before retrying a failed Nav2 goal',
-                read_only=True, type=ParameterType.PARAMETER_DOUBLE)),
-            ('nav2_server_timeout', 5.0, ParameterDescriptor(
-                description='Seconds to wait for the Nav2 action server per goal',
-                read_only=True, type=ParameterType.PARAMETER_DOUBLE)),
-            ('nav2_response_timeout', 5.0, ParameterDescriptor(
-                description='Seconds to wait for Nav2 to accept or reject a goal',
-                read_only=True, type=ParameterType.PARAMETER_DOUBLE)),
+        declare_read_only(self, [
+            ('action_name', 'moveToLocation', 'Name of the MoveToLocation action server'),
+            ('nav2_action', 'navigate_to_pose', "Name of Nav2's NavigateToPose action server"),
+            ('nav_retry_attempts', 3, 'Nav2 attempts per goal, including the first one'),
+            ('nav_retry_delay', 5.0, 'Seconds to wait before retrying a failed Nav2 goal'),
+            ('nav2_server_timeout', 5.0, 'Seconds to wait for the Nav2 action server per goal'),
+            ('nav2_response_timeout', 5.0, 'Seconds to wait for Nav2 to accept or reject a goal'),
         ])
-        self._check_parameters()
+        check([
+            (value(self, 'nav_retry_attempts') >= 1, 'nav_retry_attempts must be >= 1'),
+            (value(self, 'nav_retry_delay') >= 0.0, 'nav_retry_delay must be >= 0'),
+            (value(self, 'nav2_server_timeout') > 0.0, 'nav2_server_timeout must be > 0'),
+            (value(self, 'nav2_response_timeout') > 0.0, 'nav2_response_timeout must be > 0'),
+        ])
         self._busy = False
         self._busy_lock = threading.Lock()
         self._nav_handle = None
-        self._send_future = None  # goal request to Nav2 that has no answer yet
-        self._send_deadline = 0.0  # monotonic time its nav2_response_timeout runs out
+        self._pending = None  # PendingRequest to Nav2, deadline in monotonic time
         self._stopping = threading.Event()  # Ctrl-C: end the running goal, start no new attempt
 
         # reentrant, so Nav2 responses arrive while a goal is being executed
         group = ReentrantCallbackGroup()
-        self._nav2_name = self.get_parameter('nav2_action').value
+        self._nav2_name = value(self, 'nav2_action')
         self._nav2 = ActionClient(
             self, NavigateToPose, self._nav2_name,
             callback_group=group)
         self._server = ActionServer(
-            self, MoveToLocation, self.get_parameter('action_name').value,
+            self, MoveToLocation, value(self, 'action_name'),
             goal_callback=self._on_goal,
             cancel_callback=self._on_cancel,
             execute_callback=self._execute,
             callback_group=group)
-
-    def _check_parameters(self):
-        value = lambda name: self.get_parameter(name).value  # noqa: E731
-        checks = [
-            (value('nav_retry_attempts') >= 1, 'nav_retry_attempts must be >= 1'),
-            (value('nav_retry_delay') >= 0.0, 'nav_retry_delay must be >= 0'),
-            (value('nav2_server_timeout') > 0.0, 'nav2_server_timeout must be > 0'),
-            (value('nav2_response_timeout') > 0.0, 'nav2_response_timeout must be > 0'),
-        ]
-        for ok, message in checks:
-            if not ok:
-                raise ValueError(message)
 
     def _on_goal(self, goal):
         if self._stopping.is_set():
@@ -110,17 +89,17 @@ class NavigatorNode(Node):
         The running MoveToLocation goal then ends with "Navigator shutting down".
         """
         # read before _stopping is set: from then on _drive may give up and forget it
-        send_future = self._send_future
+        pending = self._pending
         self._stopping.set()
-        if send_future is not None:
+        if pending is not None:
             # Nav2 may still accept the goal we just sent; wait for its answer as long as
             # the response timeout would have (at most STOP_PENDING_MAX, ros2 launch kills
             # after 10 s), so a late acceptance is canceled, not orphaned
-            remaining = self._send_deadline - time.monotonic()
+            remaining = pending.deadline - time.monotonic()
             executor.spin_until_future_complete(
-                send_future, timeout_sec=min(max(0.0, remaining), STOP_PENDING_MAX))
-            if send_future.done() and send_future.result().accepted:
-                self._nav_handle = send_future.result()
+                pending.future, timeout_sec=min(max(0.0, remaining), STOP_PENDING_MAX))
+            if pending.future.done() and pending.future.result().accepted:
+                self._nav_handle = pending.future.result()
         nav_handle = self._nav_handle
         if nav_handle is not None:
             self.get_logger().info('Canceling the running Nav2 goal')
@@ -149,27 +128,23 @@ class NavigatorNode(Node):
 
     def _drive(self, goal_handle):
         request = goal_handle.request
-        server_timeout = self.get_parameter('nav2_server_timeout').value
-        retry_delay = self.get_parameter('nav_retry_delay').value
-        response_timeout = self.get_parameter('nav2_response_timeout').value
-        max_attempts = self.get_parameter('nav_retry_attempts').value
+        server_timeout = value(self, 'nav2_server_timeout')
+        retry_delay = value(self, 'nav_retry_delay')
+        response_timeout = value(self, 'nav2_response_timeout')
+        max_attempts = value(self, 'nav_retry_attempts')
         result = MoveToLocation.Result()
         for attempt in range(1, max_attempts + 1):
             if attempt > 1:
                 self._sleep_unless_canceled(goal_handle, retry_delay)
                 if goal_handle.is_cancel_requested:
-                    result.message = 'Canceled'
-                    goal_handle.canceled()
-                    return result
+                    return self._end_as_canceled(goal_handle, result)
                 if self._stopping.is_set():
                     return self._end_as_stopping(goal_handle, result)
             if not self._wait_for_nav2(goal_handle, server_timeout):
                 if self._stopping.is_set():
                     return self._end_as_stopping(goal_handle, result)
                 if goal_handle.is_cancel_requested:
-                    result.message = 'Canceled'
-                    goal_handle.canceled()
-                    return result
+                    return self._end_as_canceled(goal_handle, result)
                 self.get_logger().error('Nav2 action server is not available')
                 result.message = 'Nav2Unavailable'
                 goal_handle.abort()
@@ -181,14 +156,13 @@ class NavigatorNode(Node):
                 nav_goal,
                 feedback_callback=lambda msg, a=attempt: self._forward_feedback(
                     goal_handle, a, msg))
-            self._send_future = send_future
-            self._send_deadline = time.monotonic() + response_timeout
+            self._pending = PendingRequest(send_future, time.monotonic() + response_timeout)
             nav_handle = self._wait(
                 send_future, timeout=response_timeout, give_up=self._stopping.is_set)
-            self._send_future = None
+            self._pending = None
             if nav_handle is None:
                 # the request or its answer got lost; never leave a late acceptance driving
-                send_future.add_done_callback(_cancel_if_accepted)
+                send_future.add_done_callback(lambda f: cancel_if_accepted(f.result()))
                 if self._stopping.is_set():
                     return self._end_as_stopping(goal_handle, result)
                 result.message = 'Nav2 did not answer the goal request'
@@ -207,9 +181,7 @@ class NavigatorNode(Node):
                 give_up=lambda: server_gone(self, self._nav2_name, nav2))
             self._nav_handle = None
             if goal_handle.is_cancel_requested:
-                result.message = 'Canceled'
-                goal_handle.canceled()
-                return result
+                return self._end_as_canceled(goal_handle, result)
             if self._stopping.is_set():
                 return self._end_as_stopping(goal_handle, result)
             if nav_result is None:
@@ -225,6 +197,11 @@ class NavigatorNode(Node):
             result.message = f'Nav2 error {error.error_code}: {error.error_msg}'
             self.get_logger().warning(f'Attempt {attempt}/{max_attempts} failed: {result.message}')
         goal_handle.abort()
+        return result
+
+    def _end_as_canceled(self, goal_handle, result):
+        result.message = 'Canceled'
+        goal_handle.canceled()
         return result
 
     def _end_as_stopping(self, goal_handle, result):
@@ -245,8 +222,7 @@ class NavigatorNode(Node):
                 return False
             if self._stopping.is_set():
                 return False
-            if not self.context.ok():
-                raise RuntimeError('Shutting down')
+            self._raise_if_shut_down()
             time.sleep(0.05)
         return True
 
@@ -255,8 +231,7 @@ class NavigatorNode(Node):
         while time.monotonic() < deadline and not goal_handle.is_cancel_requested:
             if self._stopping.is_set():
                 return
-            if not self.context.ok():
-                raise RuntimeError('Shutting down')
+            self._raise_if_shut_down()
             time.sleep(0.05)
 
     def _wait(self, future, timeout=None, give_up=None):
@@ -271,8 +246,7 @@ class NavigatorNode(Node):
         deadline = None if timeout is None else time.monotonic() + timeout
         next_check = time.monotonic() + PEER_CHECK_PERIOD
         while not done.wait(0.1):
-            if not self.context.ok():
-                raise RuntimeError('Shutting down')
+            self._raise_if_shut_down()
             if deadline is not None and time.monotonic() >= deadline:
                 return None
             if give_up is not None and time.monotonic() >= next_check:
@@ -280,6 +254,10 @@ class NavigatorNode(Node):
                     return None
                 next_check = time.monotonic() + PEER_CHECK_PERIOD
         return future.result()
+
+    def _raise_if_shut_down(self):
+        if not self.context.ok():
+            raise RuntimeError('Shutting down')
 
     def _map_pose(self, x, y, yaw):
         pose = PoseStamped()
@@ -290,12 +268,6 @@ class NavigatorNode(Node):
         pose.pose.orientation.z = math.sin(yaw / 2.0)
         pose.pose.orientation.w = math.cos(yaw / 2.0)
         return pose
-
-
-def _cancel_if_accepted(send_future):
-    nav_handle = send_future.result()
-    if nav_handle is not None and nav_handle.accepted:
-        nav_handle.cancel_goal_async()
 
 
 def main(args=None):
