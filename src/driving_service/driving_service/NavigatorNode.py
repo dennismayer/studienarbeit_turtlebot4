@@ -22,7 +22,8 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 
 
-# seconds Ctrl-C waits for Nav2 to end the running goal it was told to cancel
+# seconds Ctrl-C waits for Nav2 to end the running goal it was told to cancel,
+# then the goal ends without Nav2's result
 STOP_CANCEL_TIMEOUT = 2.0
 # longest Ctrl-C waits for Nav2 to answer a goal request that is still pending
 # (ros2 launch kills after 10 s)
@@ -94,8 +95,9 @@ class NavigatorNode(Node):
         # before _stopping: _drive reads the deadline once it sees _stopping
         self._stop_deadline = time.monotonic() + STOP_PENDING_MAX
         self._stopping.set()
-        # let _drive see it through, and rclpy send the result, before ROS goes down
-        deadline = self._stop_deadline + STOP_CANCEL_TIMEOUT
+        # let _drive see it through, and rclpy send the result, before ROS goes down;
+        # _drive needs at most STOP_CANCEL_TIMEOUT after the deadline, plus a poll step
+        deadline = self._stop_deadline + STOP_CANCEL_TIMEOUT + 1.0
         while self._busy and time.monotonic() < deadline:
             executor.spin_once(timeout_sec=0.1)
         flush_until = time.monotonic() + STOP_RESULT_FLUSH
@@ -190,15 +192,21 @@ class NavigatorNode(Node):
         Wait for the result of an accepted Nav2 goal; None once its Nav2 server is gone.
 
         A cancel or Ctrl-C, also one that came before Nav2 accepted, cancels the Nav2 goal.
+        After Ctrl-C, None also once Nav2 hasn't ended it STOP_CANCEL_TIMEOUT after the
+        cancel (Nav2 rejected or ignored it, or died), so the client still gets a result.
         """
-        forwarded = False
+        forwarded_at = None
 
         def forward_interruption_or_give_up():
-            nonlocal forwarded
-            if not forwarded and self._interrupted(goal_handle):
+            nonlocal forwarded_at
+            if forwarded_at is None and self._interrupted(goal_handle):
                 self.get_logger().info('Canceling the Nav2 goal')
                 nav_handle.cancel_goal_async()
-                forwarded = True
+                forwarded_at = time.monotonic()
+            if (self._stopping.is_set() and forwarded_at is not None
+                    and time.monotonic() >= forwarded_at + STOP_CANCEL_TIMEOUT):
+                self.get_logger().warning('Nav2 did not end the canceled goal')
+                return True
             return server_gone(self, self._nav2_name, nav2)
 
         return self._wait(nav_handle.get_result_async(), give_up=forward_interruption_or_give_up)

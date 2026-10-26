@@ -41,12 +41,13 @@ class FakeNav2(SpinsAlone, Node):
         self.accept_delays = []  # per goal, before falling back to accept_delay
         self._answered_late = set()  # requests that got an accept_delays entry hold
         self.goals_to_reject = 0
+        self.cancel_response = CancelResponse.ACCEPT  # REJECT: drives on, like a stuck Nav2
         self.stopped = threading.Event()
         self._server = ActionServer(
             self, NavigateToPose, action_name,
             goal_callback=self._on_goal,
             execute_callback=self._execute,
-            cancel_callback=lambda _: CancelResponse.ACCEPT,
+            cancel_callback=lambda _: self.cancel_response,
             callback_group=ReentrantCallbackGroup())
 
     def close(self):
@@ -407,6 +408,18 @@ def test_cancel_while_nav2_decides_on_the_last_attempt_ends_as_canceled(harness,
     assert result_response.result.message == 'Canceled'
 
 
+def test_cancel_that_nav2_rejects_does_not_end_the_goal_while_nav2_drives_on(harness):
+    h = harness(outcomes=['hold'])
+    h.nav2.cancel_response = CancelResponse.REJECT
+    goal_handle = h.send(x=1.0, y=1.0)
+    wait_until(lambda: len(h.nav2.received) == 1)
+
+    wait_for(goal_handle.cancel_goal_async())
+    result_future = goal_handle.get_result_async()
+
+    assert not wait_until(result_future.done, timeout=3.0)  # past STOP_CANCEL_TIMEOUT
+
+
 class StopsWhenAccepting(NavigatorNode):
     """Navigator that gets Ctrl-C in the spin step that accepts a goal."""
 
@@ -447,6 +460,49 @@ def test_cancel_wins_over_a_ctrl_c_that_comes_after_it(harness):
     assert result_response.status == GoalStatus.STATUS_CANCELED
     assert result_response.result.message == 'Canceled'
     assert h.nav2.canceled.is_set()
+
+
+@pytest.mark.parametrize('client_cancels_first, message', [
+    (False, 'Navigator shutting down'),
+    (True, 'Canceled'),
+])
+def test_ctrl_c_ends_the_goal_even_when_nav2_never_ends_its_goal(
+        harness, client_cancels_first, message):
+    h = harness(outcomes=['hold'], spin_navigator=False)
+    h.nav2.cancel_response = CancelResponse.REJECT
+    send_future = h.client.send_goal_async(MoveToLocation.Goal(x=1.0, y=1.0))
+    h.spin_navigator_until(send_future.done)
+    goal_handle = send_future.result()
+    h.spin_navigator_until(lambda: len(h.nav2.received) == 1)
+    if client_cancels_first:
+        cancel_future = goal_handle.cancel_goal_async()
+        h.spin_navigator_until(cancel_future.done)
+    result_future = goal_handle.get_result_async()
+
+    started = time.monotonic()
+    h.navigator.stop(h.navigator_executor)
+    result_response = wait_for(result_future)
+
+    assert result_response.result.message == message
+    assert time.monotonic() - started < 5.0
+
+
+def test_ctrl_c_ends_the_goal_when_nav2_accepts_late_and_then_ignores_the_cancel(harness):
+    h = harness(spin_navigator=False, nav2_response_timeout=5.0)
+    h.nav2.accept_delays = [4.0]  # within the response timeout, then holds
+    h.nav2.cancel_response = CancelResponse.REJECT
+    send_future = h.client.send_goal_async(MoveToLocation.Goal(x=1.0, y=1.0))
+    h.spin_navigator_until(send_future.done)
+    result_future = send_future.result().get_result_async()
+    h.spin_navigator_until(lambda: h.nav2.requests == 1)
+
+    started = time.monotonic()
+    h.navigator.stop(h.navigator_executor)
+    result_response = wait_for(result_future)
+
+    assert result_response.result.message == 'Navigator shutting down'
+    assert len(h.nav2.received) == 1
+    assert time.monotonic() - started < 8.5  # ros2 launch kills after 10 s
 
 
 @pytest.mark.parametrize('bad', [
