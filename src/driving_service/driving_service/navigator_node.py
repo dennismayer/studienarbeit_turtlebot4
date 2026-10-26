@@ -25,6 +25,8 @@ from rclpy.node import Node
 PEER_CHECK_PERIOD = 0.5
 # seconds Ctrl-C waits for Nav2 to confirm the cancel of the running goal
 STOP_CANCEL_TIMEOUT = 2.0
+# longest Ctrl-C waits for Nav2 to answer a goal request that is still pending
+STOP_PENDING_MAX = 5.0
 # seconds Ctrl-C keeps spinning after the running goal ended, so its result goes out
 STOP_RESULT_FLUSH = 0.5
 
@@ -59,6 +61,7 @@ class NavigatorNode(Node):
         self._busy_lock = threading.Lock()
         self._nav_handle = None
         self._send_future = None  # goal request to Nav2 that has no answer yet
+        self._send_deadline = 0.0  # monotonic time its nav2_response_timeout runs out
         self._stopping = threading.Event()  # Ctrl-C: end the running goal, start no new attempt
 
         # reentrant, so Nav2 responses arrive while a goal is being executed
@@ -106,11 +109,16 @@ class NavigatorNode(Node):
 
         The running MoveToLocation goal then ends with "Navigator shutting down".
         """
-        self._stopping.set()
+        # read before _stopping is set: from then on _drive may give up and forget it
         send_future = self._send_future
+        self._stopping.set()
         if send_future is not None:
-            # Nav2 may still accept the goal we just sent; wait for its answer
-            executor.spin_until_future_complete(send_future, timeout_sec=STOP_CANCEL_TIMEOUT)
+            # Nav2 may still accept the goal we just sent; wait for its answer as long as
+            # the response timeout would have (at most STOP_PENDING_MAX, ros2 launch kills
+            # after 10 s), so a late acceptance is canceled, not orphaned
+            remaining = self._send_deadline - time.monotonic()
+            executor.spin_until_future_complete(
+                send_future, timeout_sec=min(max(0.0, remaining), STOP_PENDING_MAX))
             if send_future.done() and send_future.result().accepted:
                 self._nav_handle = send_future.result()
         nav_handle = self._nav_handle
@@ -174,6 +182,7 @@ class NavigatorNode(Node):
                 feedback_callback=lambda msg, a=attempt: self._forward_feedback(
                     goal_handle, a, msg))
             self._send_future = send_future
+            self._send_deadline = time.monotonic() + response_timeout
             nav_handle = self._wait(
                 send_future, timeout=response_timeout, give_up=self._stopping.is_set)
             self._send_future = None

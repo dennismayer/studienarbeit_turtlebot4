@@ -701,3 +701,12 @@ def test_ctrl_c_works_even_when_the_navigator_was_started_with_sigint_ignored():
 
     assert run_navigator_and_ctrl_c(
         accept_delay=0.0, sigint_when=while_driving, sigint_ignored=True)
+
+
+def test_ctrl_c_still_cancels_a_nav2_acceptance_that_comes_late_within_the_response_timeout():
+    def while_nav2_decides(nav2):
+        time.sleep(0.5)  # request sent, Nav2 answers only after 4 s
+
+    assert run_navigator_and_ctrl_c(
+        accept_delay=4.0, sigint_when=while_nav2_decides,
+        params=('-p', 'nav2_response_timeout:=5.0'))
