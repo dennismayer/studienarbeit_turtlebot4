@@ -80,8 +80,11 @@ These two packages are agent-owned (see the exception in `AGENTS.md`).
 
 - QA report 5 (at a33f82d): **Passes** — see `qa-report-5.md`; its one concern (X_late55) is the known limit above.
 
+- Code review (since 371feb3, at bf59d53): **Ready with fixes**. Findings AD1 (P1), AD2, SP1–SP4, ST1–ST9; dispositions below.
+- User decision 2026-10-26 on ST1 (snake_case node modules vs CamelCase in speaking_service): **O2, rename the node modules to CamelCase** (`NavigatorNode.py`, `VisitorDetectorNode.py`) to match speaking_service; helper modules stay lowercase like speaking_service's `scripts/cache.py`.
+
 ### Next steps
-- Code review since 371feb3 with this spec.
+- Fix the review findings (structural first as refactor:, then behavior test-first), follow-up QA and review.
 
 ### How to run
 - Gate: `colcon build --packages-select driving_interfaces driving_service && colcon test --packages-select driving_service && colcon test-result --test-result-base build/driving_service`

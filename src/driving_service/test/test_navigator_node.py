@@ -11,7 +11,7 @@ import uuid
 
 from action_msgs.msg import GoalStatus
 from driving_interfaces.action import MoveToLocation
-from driving_service.navigator_node import NavigatorNode
+from driving_service.NavigatorNode import NavigatorNode
 from nav2_msgs.action import NavigateToPose
 import pytest
 import rclpy
@@ -542,7 +542,7 @@ def run_navigator_and_ctrl_c(accept_delay, sigint_when, results=None, outcomes=(
         signal.signal(signal.SIGINT, signal.SIG_IGN)
 
     navigator = subprocess.Popen(
-        [sys.executable, '-m', 'driving_service.navigator_node', '--ros-args',
+        [sys.executable, '-m', 'driving_service.NavigatorNode', '--ros-args',
          '-p', f'action_name:={prefix}/moveToLocation',
          '-p', f'nav2_action:={prefix}/navigate_to_pose', *params],
         env={**os.environ, 'ROS_DOMAIN_ID': str(TEST_DOMAIN_ID)},

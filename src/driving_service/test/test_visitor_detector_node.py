@@ -6,7 +6,7 @@ import time
 import uuid
 
 from driving_interfaces.action import VisitorDetected
-from driving_service.visitor_detector_node import VisitorDetectorNode
+from driving_service.VisitorDetectorNode import VisitorDetectorNode
 import pytest
 import rclpy
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
