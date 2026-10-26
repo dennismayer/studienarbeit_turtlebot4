@@ -1,5 +1,6 @@
 """Helpers shared by the tests that start ROS."""
 
+import os
 import threading
 import time
 
@@ -10,6 +11,14 @@ from rclpy.executors import MultiThreadedExecutor
 # participants across domain IDs, so the domain ID alone does not isolate.
 TEST_DOMAIN_ID = 87
 TIMEOUT = 10.0
+
+
+def isolated_env():
+    """Copy of the environment that keeps ROS away from the robot's real nodes."""
+    env = {name: v for name, v in os.environ.items() if name != 'ROS_DISCOVERY_SERVER'}
+    env['ROS_DOMAIN_ID'] = str(TEST_DOMAIN_ID)
+    env['ROS_AUTOMATIC_DISCOVERY_RANGE'] = 'LOCALHOST'
+    return env
 
 
 def wait_for(future, timeout=TIMEOUT):

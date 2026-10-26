@@ -61,7 +61,7 @@ class DetectionParams:
 
 @dataclass(frozen=True)
 class VisitorCandidate:
-    """A person-like cluster in front of the robot; reported once it is stable."""
+    """Something in front of the robot that looks like a person; see GLOSSARY.md."""
 
     distance: float
     angle: float
@@ -96,7 +96,7 @@ class VisitorDetector:
         range_max: float,
         now: float,
     ) -> Optional[VisitorCandidate]:
-        """Process one scan; return the visitor to report, or None."""
+        """Process one scan; return the candidate that just became a Visitor, or None."""
         self._scan_count += 1
         if self._scan_count % self._params.frame_skip_rate != 0:
             return None

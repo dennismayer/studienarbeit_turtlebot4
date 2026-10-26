@@ -91,6 +91,7 @@ These two packages are agent-owned (see the exception in `AGENTS.md`).
   - After a client cancel Nav2 refused, Ctrl-C ends the goal without sending the cancel again; a Nav2 that refused once drives on. A real Nav2 doesn't refuse cancels.
   - Worst-case exit after Ctrl-C is ~8.2 s (Nav2 accepts ~5 s late and then ignores the cancel), 1.8 s before `ros2 launch`'s SIGKILL.
   - Stray rclpy teardown messages at shutdown ("feedback publisher is invalid", "cannot use Destroyable"); harmless.
+- Follow-up code review (since bf59d53, at ea083d1): **Ready** — Spec and Adversarial no findings; Standards six P3. Fixed P3 1–4 (asserted test syncs, detector-only `PEER_CHECK_PERIOD`/`PendingRequest` moved into `VisitorDetectorNode`, glossary wording in `visitor_detector.py`, one `isolated_env()` for tests). Skipped by user decision: P3 5 (`params.value` differs from speaking_service's `get_param`), P3 6 (implicit `SpinsAlone` attribute contract).
 - Flake fixed: the late-acceptance retry test had 0.5 s of margin; under suite load a starved wait thread took the late answer as in time (da00389).
 
 ### Next steps

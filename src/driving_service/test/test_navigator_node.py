@@ -1,7 +1,6 @@
 """MoveToLocation action against a fake Nav2 navigate_to_pose server."""
 
 import math
-import os
 import signal
 import subprocess
 import sys
@@ -20,7 +19,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
-from ros_test_tools import SpinsAlone, TEST_DOMAIN_ID, TIMEOUT, wait_for, wait_until
+from ros_test_tools import isolated_env, SpinsAlone, TIMEOUT, wait_for, wait_until
 
 pytestmark = pytest.mark.usefixtures('ros')
 
@@ -238,14 +237,14 @@ def test_nav2_distance_remaining_is_forwarded_with_the_attempt(harness):
 
     h.move_to(x=1.0, y=1.0)
 
-    wait_until(lambda: len(h.feedback) >= 2)
+    assert wait_until(lambda: len(h.feedback) >= 2)
     assert [(f.attempt, f.distance_remaining) for f in h.feedback] == [(1, 4.25), (2, 4.25)]
 
 
 def test_second_goal_is_rejected_while_driving(harness):
     h = harness(outcomes=['hold'])
     first = h.send(x=1.0, y=1.0)
-    wait_until(lambda: len(h.nav2.received) == 1)
+    assert wait_until(lambda: len(h.nav2.received) == 1)
 
     second = h.send(x=5.0, y=5.0)
 
@@ -258,7 +257,7 @@ def test_canceling_the_goal_cancels_the_nav2_goal(harness):
     h = harness(outcomes=['hold'])
     h.nav2.feedback_distance = 3.0
     goal_handle = h.send(x=1.0, y=1.0)
-    wait_until(lambda: len(h.feedback) == 1)
+    assert wait_until(lambda: len(h.feedback) == 1)
 
     wait_for(goal_handle.cancel_goal_async())
     result_response = wait_for(goal_handle.get_result_async())
@@ -273,7 +272,7 @@ def test_cancel_that_arrives_before_nav2_accepted_still_cancels_the_nav2_goal(ha
     h = harness(outcomes=['hold'])
     h.nav2.accept_delay = 1.0
     goal_handle = h.send(x=1.0, y=1.0)
-    wait_until(lambda: h.nav2.requests == 1)  # navigator is waiting for Nav2 to accept
+    assert wait_until(lambda: h.nav2.requests == 1)  # navigator is waiting for Nav2 to accept
 
     wait_for(goal_handle.cancel_goal_async())
     result_response = wait_for(goal_handle.get_result_async())
@@ -295,7 +294,7 @@ def test_retry_waits_the_retry_delay(harness):
 def test_cancel_during_the_retry_delay_ends_the_goal_without_another_attempt(harness):
     h = harness(outcomes=['abort', 'succeed'], nav_retry_delay=30.0)
     goal_handle = h.send(x=1.0, y=1.0)
-    wait_until(lambda: len(h.nav2.received) == 1)
+    assert wait_until(lambda: len(h.nav2.received) == 1)
     # aims the cancel at the retry delay; landing earlier ends the goal the same way
     time.sleep(0.3)
 
@@ -363,7 +362,7 @@ def shuts_down_within(h, seconds):
 def test_shutdown_while_driving_does_not_hang(harness):
     h = harness(outcomes=['hold'])
     h.send(x=1.0, y=1.0)
-    wait_until(lambda: len(h.nav2.received) == 1)
+    assert wait_until(lambda: len(h.nav2.received) == 1)
 
     assert shuts_down_within(h, 5.0)
 
@@ -371,7 +370,7 @@ def test_shutdown_while_driving_does_not_hang(harness):
 def test_shutdown_while_waiting_to_retry_does_not_hang(harness):
     h = harness(outcomes=['abort'], nav_retry_delay=30.0)
     h.send(x=1.0, y=1.0)
-    wait_until(lambda: len(h.nav2.received) == 1)
+    assert wait_until(lambda: len(h.nav2.received) == 1)
     time.sleep(0.3)  # aims at the retry delay; landing earlier must not hang either
 
     assert shuts_down_within(h, 5.0)
@@ -381,7 +380,7 @@ def test_cancel_during_the_last_attempt_ends_as_canceled(harness):
     h = harness(outcomes=['hold'], nav_retry_attempts=1)
     h.nav2.feedback_distance = 3.0
     goal_handle = h.send(x=1.0, y=1.0)
-    wait_until(lambda: len(h.feedback) == 1)
+    assert wait_until(lambda: len(h.feedback) == 1)
 
     wait_for(goal_handle.cancel_goal_async())
     result_response = wait_for(goal_handle.get_result_async())
@@ -399,7 +398,7 @@ def test_cancel_while_nav2_decides_on_the_last_attempt_ends_as_canceled(harness,
     else:
         h.nav2.accept_delays = [3.0]  # beyond nav2_response_timeout
     goal_handle = h.send(x=1.0, y=1.0)
-    wait_until(lambda: h.nav2.requests == 1)
+    assert wait_until(lambda: h.nav2.requests == 1)
 
     wait_for(goal_handle.cancel_goal_async())
     result_response = wait_for(goal_handle.get_result_async())
@@ -412,7 +411,7 @@ def test_cancel_that_nav2_rejects_does_not_end_the_goal_while_nav2_drives_on(har
     h = harness(outcomes=['hold'])
     h.nav2.cancel_response = CancelResponse.REJECT
     goal_handle = h.send(x=1.0, y=1.0)
-    wait_until(lambda: len(h.nav2.received) == 1)
+    assert wait_until(lambda: len(h.nav2.received) == 1)
 
     wait_for(goal_handle.cancel_goal_async())
     result_future = goal_handle.get_result_async()
@@ -548,7 +547,7 @@ def test_cancel_while_waiting_for_the_nav2_server_ends_as_canceled(harness):
 def test_goal_ends_when_nav2_vanishes_during_the_drive(harness):
     h = harness(outcomes=['hold'], nav2_server_timeout=1.0)
     goal_handle = h.send(x=1.0, y=1.0)
-    wait_until(lambda: len(h.nav2.received) == 1)
+    assert wait_until(lambda: len(h.nav2.received) == 1)
 
     h.nav2.stop()
     result_response = wait_for(goal_handle.get_result_async())
@@ -562,7 +561,7 @@ def test_goal_is_retried_on_a_restarted_nav2(harness):
     # each lost one costs an attempt, so allow some
     h = harness(outcomes=['hold'], nav_retry_attempts=6)
     goal_handle = h.send(x=1.0, y=1.0)
-    wait_until(lambda: len(h.nav2.received) == 1)
+    assert wait_until(lambda: len(h.nav2.received) == 1)
 
     h.restart_nav2(outcomes=['succeed'])
     result = wait_for(goal_handle.get_result_async(), timeout=20.0).result
@@ -588,7 +587,7 @@ def test_goal_on_nav2_is_kept_when_a_crashed_copy_leaves_the_graph(harness):
     zombie = h.start_zombie_nav2()
     time.sleep(1.0)  # both copies are in the graph when the goal is sent
     goal_handle = h.send(x=1.0, y=1.0)
-    wait_until(lambda: len(h.nav2.received) == 1)
+    assert wait_until(lambda: len(h.nav2.received) == 1)
 
     zombie.stop()  # the crashed copy finally drops out
     result = wait_for(goal_handle.get_result_async()).result
@@ -628,7 +627,7 @@ def run_navigator_and_ctrl_c(accept_delay, sigint_when, results=None, outcomes=(
         [sys.executable, '-m', 'driving_service.NavigatorNode', '--ros-args',
          '-p', f'action_name:={prefix}/moveToLocation',
          '-p', f'nav2_action:={prefix}/navigate_to_pose', *params],
-        env={**os.environ, 'ROS_DOMAIN_ID': str(TEST_DOMAIN_ID)},
+        env=isolated_env(),
         preexec_fn=ignore_sigint if sigint_ignored else None)
 
     def on_result(response):

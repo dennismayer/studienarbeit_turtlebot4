@@ -1,19 +1,10 @@
 """The node processes, started the way ros2 run starts them."""
 
-import os
 import subprocess
 import sys
 
 import pytest
-from ros_test_tools import TEST_DOMAIN_ID
-
-
-def isolated_env():
-    """Environment that keeps the process away from the robot's real nodes."""
-    env = {name: v for name, v in os.environ.items() if name != 'ROS_DISCOVERY_SERVER'}
-    env['ROS_DOMAIN_ID'] = str(TEST_DOMAIN_ID)
-    env['ROS_AUTOMATIC_DISCOVERY_RANGE'] = 'LOCALHOST'
-    return env
+from ros_test_tools import isolated_env
 
 
 @pytest.mark.parametrize('module, bad_param, message', [

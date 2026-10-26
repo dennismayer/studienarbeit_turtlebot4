@@ -4,12 +4,12 @@ Visitor detector node: starts a visit when a visitor stands in front of the robo
 Created with Claude (Anthropic) on the basis of the car_museum_guide package.
 """
 
+from dataclasses import dataclass
 import math
 import sys
 
 from driving_interfaces.action import VisitorDetected
-from driving_service.action_peer import (
-    cancel_if_accepted, PEER_CHECK_PERIOD, PendingRequest, server_gone, server_identity)
+from driving_service.action_peer import cancel_if_accepted, server_gone, server_identity
 from driving_service.params import check, declare_read_only, value
 from driving_service.run_node import run
 from driving_service.visitor_detector import DetectionParams, VisitorCandidate, VisitorDetector
@@ -17,6 +17,17 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
+
+# seconds between checks of the receptionist: answer overdue, still the server of the visit
+PEER_CHECK_PERIOD = 0.5
+
+
+@dataclass
+class PendingRequest:
+    """A goal request the receptionist hasn't answered yet."""
+
+    future: object  # future of send_goal_async
+    deadline: float  # when we stop waiting for the answer
 
 
 class VisitorDetectorNode(Node):
