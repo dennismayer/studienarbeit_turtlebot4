@@ -16,7 +16,7 @@ from rcl_interfaces.msg import ParameterDescriptor, FloatingPointRange, Paramete
 
 from speaking_interfaces.action import AudioTranscriber
 
-from speaking_service.scripts.parameter_helper import get_param
+from robot_common.parameter_helper import get_param
 
 class AudioTranscriberActionServer(Node):
 

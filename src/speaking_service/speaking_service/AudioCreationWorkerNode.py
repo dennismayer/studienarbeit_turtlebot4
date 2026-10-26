@@ -16,7 +16,7 @@ from rcl_interfaces.msg import ParameterDescriptor, FloatingPointRange, Paramete
 from speaking_interfaces.action import AudioCreation
 
 from speaking_service.scripts.cache import FileCache
-from speaking_service.scripts.parameter_helper import get_param
+from robot_common.parameter_helper import get_param
 
 # default parameter in case no launch file is being used
 DEFAULT_NODE_NAME = "AudioCreationWorker"

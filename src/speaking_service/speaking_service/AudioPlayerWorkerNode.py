@@ -15,7 +15,7 @@ from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 
 from speaking_interfaces.action import AudioPlayer
 
-from speaking_service.scripts.parameter_helper import get_param
+from robot_common.parameter_helper import get_param
 
 class AudioPlayerActionServer(Node):
     

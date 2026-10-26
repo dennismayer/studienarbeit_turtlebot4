@@ -19,7 +19,7 @@ from speaking_interfaces.action import AudioCreation, AudioListener, AudioPlayer
 from speaking_interfaces.msg import ListenerParams, TranscriberParams, UploadParams
 
 from speaking_service.scripts.cache import FileCache
-from speaking_service.scripts.parameter_helper import get_param
+from robot_common.parameter_helper import get_param
 
 class SpeechOrchestratorNode(Node):
 

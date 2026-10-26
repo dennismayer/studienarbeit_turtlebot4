@@ -14,6 +14,7 @@
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>speaking_interfaces</exec_depend>
+  <exec_depend>robot_common</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 
