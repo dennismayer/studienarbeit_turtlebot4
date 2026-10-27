@@ -22,7 +22,7 @@ from speaking_interfaces.msg import ListenerParams, TranscriberParams, UploadPar
 
 from speaking_service.scripts.cache import FileCache
 from robot_common.parameter_helper import get_param
-from robot_common.action_client_server_helper import check_if_client_started, GoalAbort, GoalCanceled, GoalRejected
+from robot_common.action_client_server_helper import check_if_client_started, send_universal_goal, wait_for_universal_result, GoalAbort, GoalCanceled, GoalRejected
 from robot_common.logger_helper import log_goal
 
 DEFAULT_NODE_NAME = "AudioOrchestrator"
@@ -333,38 +333,21 @@ class SpeechOrchestratorNode(Node):
         return result
     
     async def _send_goal(self, client: ActionClient, goal, feedback_callback=None) -> ClientGoalHandle:
-        if not client.server_is_ready():
-            raise GoalAbort(f"Worker {client._action_name} is not available")
-
-        # goal acceptance should be quick, so the short action_timeout fits here
-        self.get_logger().debug(f"Sending goal to {client._action_name}")
-        send_future = client.send_goal_async(goal, feedback_callback=feedback_callback)
-        worker_handle: ClientGoalHandle | None = await self._await_with_timeout(send_future, self.__action_timeout)
-        if send_future.cancelled():
-            raise GoalAbort(f"Worker {client._action_name} did not respond to the goal within {self.__action_timeout:.1f} s")
-        if worker_handle is None or not worker_handle.accepted:
-            raise GoalRejected(f"Worker {client._action_name} rejected the goal (busy?)")
+        worker_handle = await send_universal_goal(self, client, goal, self.__action_timeout, feedback_callback=feedback_callback)
 
         with self._lock_handle_set:
             self._active_worker_handle.append(worker_handle)
         return worker_handle
     
     async def _wait_for_result(self, worker_handle: ClientGoalHandle, timeout_sec: float):
-        action_name = worker_handle._action_client._action_name
         try:
-            result_future = worker_handle.get_result_async()
-            response = await self._await_with_timeout(result_future, timeout_sec)
-            if result_future.cancelled():
-                # not awaited: a dead worker would never answer the cancel request either
-                worker_handle.cancel_goal_async()
-                raise GoalAbort(f"Worker {action_name} did not finish within {timeout_sec:.1f} s, goal canceled")
+            response = await wait_for_universal_result(self, worker_handle, timeout_sec)
         finally:
             with self._lock_handle_set:
                 self._active_worker_handle.remove(worker_handle)
 
-        if response is None:
-            raise GoalAbort(f"Worker {action_name} returned no result")
-
+        action_name = worker_handle._action_client._action_name
+        
         match response.status:
             case GoalStatus.STATUS_SUCCEEDED:
                 return response.result
@@ -508,19 +491,6 @@ class SpeechOrchestratorNode(Node):
         self.get_logger().info("Request canceled")
         goal_handle.canceled()
         return self._assemble_result(False, "Canceled", "")
-    
-    async def _await_with_timeout(self, future, timeout_sec: float):
-        def on_timeout():
-            timer.cancel()
-            future.cancel()          # wakes up the await below with None
-
-        timer = self.create_timer(timeout_sec, on_timeout)
-        try:
-            return await future
-        finally:
-            timer.cancel()
-            self.destroy_timer(timer)
-
         
 
 def main(args=None):
