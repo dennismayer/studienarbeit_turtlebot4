@@ -61,6 +61,7 @@ class MESSAGE_TYPE(Enum):
     STANDARD  = 0
     UPLOAD = 1
     DRIVE = 2
+    LOOK_FOR_CONSULTATION_HOUR = 3
     
 
 class ReceptionistNode(Node):
@@ -100,7 +101,6 @@ class ReceptionistNode(Node):
         
         self._action_timeout = ACTION_TIMEOUT
         self._orchestrator_timeout = ORCHESTRATOR_TIMEOUT
-        #todo is set again. please correct
         self._active_worker_handle = []
         self._away_from_station = False
         self._lock_worker_handle = Lock()
@@ -163,6 +163,8 @@ class ReceptionistNode(Node):
                         await self._react_to_drive_message()
                     case MESSAGE_TYPE.UPLOAD:
                         await self._react_to_upload_message()
+                    case MESSAGE_TYPE.LOOK_FOR_CONSULTATION_HOUR:
+                        pass
             
             goal_handle.succeed()
             return self._assemble_result(True, "Finished")

@@ -1,0 +1,10 @@
+string file_path
+speaking_interfaces/UploadParams upload_params
+---
+bool success
+string message
+---
+uint8 RECEIVED=0
+uint8 UPLOAD_LINK_RECEIVED=1
+uint8 UPLOADED=2
+uint8 state
