@@ -19,6 +19,7 @@ from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from action_msgs.msg import GoalStatus
 from speaking_interfaces.action import AudioCreation, AudioListener, AudioPlayer, AudioTranscriber, AudioOrchestrator
 from speaking_interfaces.msg import ListenerParams, TranscriberParams, UploadParams
+from server_interfaces.action import UploadFile
 
 from speaking_service.scripts.cache import FileCache
 from robot_common.parameter_helper import get_param
@@ -70,6 +71,11 @@ class SpeechOrchestratorNode(Node):
                     description="Fully qualified name of the AudioTranscriberWorker action server",
                     read_only=True,
                     type=ParameterType.PARAMETER_STRING)),
+            ("uploader_action", "TMP_Upload_client",
+                ParameterDescriptor(
+                    description="Fully qualified name of the UploadFile action server",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_STRING)),
             ("action_timeout", 5.0,
                 ParameterDescriptor(
                     description="Timeout in seconds for action calls",
@@ -100,6 +106,11 @@ class SpeechOrchestratorNode(Node):
                     description="Timeout in seconds for the AudioTranscriberWorker result",
                     read_only=True,
                     type=ParameterType.PARAMETER_DOUBLE)),
+            ("uploader_timeout", 60.0,
+                ParameterDescriptor(
+                    description="Timeout in seconds for the UploadFile result",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_DOUBLE)),
             ("audio_cache_path", "speaking_service/audio_cache",
                 ParameterDescriptor(
                     description="Audio cache directory, relative to $ROS_HOME",
@@ -123,6 +134,7 @@ class SpeechOrchestratorNode(Node):
         self.__player_timeout = get_param(self, "player_timeout", float)
         self.__listener_timeout = get_param(self, "listener_timeout", float)
         self.__transcriber_timeout = get_param(self, "transcriber_timeout", float)
+        self.__uploader_timeout = get_param(self, "uploader_timeout", float)
         
         self._first_noise_detected = False
         self._current_goal_handle = None
@@ -161,11 +173,18 @@ class SpeechOrchestratorNode(Node):
             get_param(self, "transcriber_action", str)
         )
         
+        self.__server_upload_client = ActionClient(
+            self,
+            UploadFile,
+            get_param(self, "uploader_action", str)
+        )
+        
         # check if clients are up
         check_if_client_started(self.__audio_creation_action_client, self.__client_start_timeout)
         check_if_client_started(self.__audio_player_action_client, self.__client_start_timeout)
         check_if_client_started(self.__audio_transcriber_action_client, self.__client_start_timeout)
         check_if_client_started(self.__audio_listener_action_client, self.__client_start_timeout)
+        check_if_client_started(self.__server_upload_client, self.__client_start_timeout)
         
         self.get_logger().info("All worker action servers reachable")
 
@@ -212,7 +231,7 @@ class SpeechOrchestratorNode(Node):
             
             # check if upload response or do something else
             if request.response_handling == AudioOrchestrator.Goal.UPLOAD_RESPONSE:
-                return self._goal_upload_handling(goal_handle)
+                return await self._goal_upload_handling(goal_handle, listener_result.file_path)
             
             # last case: Transcribing
             return await self._goal_transcribing_handling(goal_handle, listener_result.file_path, request)
@@ -376,11 +395,21 @@ class SpeechOrchestratorNode(Node):
         goal_handle.succeed()
         return self._assemble_result(True, "NoResponse", "")
     
-    def _goal_upload_handling(self, goal_handle: ServerGoalHandle):
+    async def _goal_upload_handling(self, goal_handle: ServerGoalHandle, file_path: str):
         self._send_state_feedback(AudioOrchestrator.Feedback.UPLOADING, goal_handle)
         self._check_for_cancel_request(goal_handle)
-        # TODO Upload Node adding
-        self.get_logger().warning("Upload is not implemented yet, recording is discarded")
+        
+        goal = UploadFile.Goal()
+        goal.file_path = file_path
+        goal.upload_params = goal_handle.request.upload_parameters
+        result: UploadFile.Result = await self._run_worker(
+            self.__server_upload_client,
+            goal,
+            timeout_sec=self.__uploader_timeout
+        )
+        if not result.success:
+            raise GoalAbort(f"Upload failed with message: {result.message}")
+        
         goal_handle.succeed()
         return self._assemble_result(True, "UploadResponse", "")
     
