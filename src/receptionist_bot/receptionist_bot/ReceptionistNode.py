@@ -100,7 +100,8 @@ class ReceptionistNode(Node):
         
         self._action_timeout = ACTION_TIMEOUT
         self._orchestrator_timeout = ORCHESTRATOR_TIMEOUT
-        self._active_worker_handle = None
+        #todo is set again. please correct
+        self._active_worker_handle = []
         self._away_from_station = False
         self._lock_worker_handle = Lock()
         self._lock_callback = Lock()
@@ -183,9 +184,11 @@ class ReceptionistNode(Node):
             return self._handle_error_callback(goal_handle, f"An Unknown Error occurred: {e}")
         finally:
             with self._lock_worker_handle:
-                if self._active_worker_handle is not None:
-                    self._active_worker_handle.cancel_goal_async()
-                    self._active_worker_handle = None
+                if self._active_worker_handle:
+                    self.get_logger().debug(f"Canceling {len(self._active_worker_handle)} leftover worker goal(s)")
+                for worker_handle in self._active_worker_handle:
+                    worker_handle.cancel_goal_async()
+                self._active_worker_handle.clear()
             
             if self._away_from_station:
                 goal = MoveToLocation.Goal()
@@ -504,7 +507,7 @@ class ReceptionistNode(Node):
         worker_handle = await send_universal_goal(self, client, goal, self._action_timeout, feedback_callback=feedback_callback)
 
         with self._lock_worker_handle:
-            self._active_worker_handle = worker_handle
+            self._active_worker_handle.append(worker_handle)
         return worker_handle
     
     async def _wait_for_result(self, worker_handle: ClientGoalHandle, timeout_sec: float):
@@ -512,7 +515,7 @@ class ReceptionistNode(Node):
             response = await wait_for_universal_result(self, worker_handle, timeout_sec)
         finally:
             with self._lock_worker_handle:
-                self._active_worker_handle = None
+                self._active_worker_handle.remove(worker_handle)
 
         action_name = worker_handle._action_client._action_name
         
@@ -541,7 +544,8 @@ class ReceptionistNode(Node):
             self.get_logger().info("Cancel requested by client")
             with self._lock_worker_handle:
                 if self._active_worker_handle is not None:
-                    self._active_worker_handle.cancel_goal_async()
+                    for worker_handle in self._active_worker_handle:
+                        worker_handle.cancel_goal_async()
             return CancelResponse.ACCEPT 
     
     #todo On error say: "Tut mir leid ich habe momentan einen fehler"?
