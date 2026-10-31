@@ -62,7 +62,6 @@ messages:
   drive_to_professor:
     say: "Folge mir bitte, ich bringe dich zu {professor_name}."
     action: drive
-    target: professor
     on_success: ask_talk
     on_failure: drive_failed
 

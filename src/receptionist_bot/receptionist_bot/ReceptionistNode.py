@@ -7,10 +7,10 @@ import numpy as np
 from typing import TYPE_CHECKING, Mapping, Any, Sequence
 from dotenv import load_dotenv
 import yaml
+import num2words
 
 import boto3
 from botocore.config import Config
-
 
 import rclpy
 from ament_index_python.packages import get_package_share_directory
@@ -23,13 +23,16 @@ from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rosidl_runtime_py import message_to_yaml
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 
-
 from action_msgs.msg import GoalStatus
 from speaking_interfaces.action import AudioOrchestrator
 from speaking_interfaces.msg import ListenerParams, TranscriberParams, UploadParams
 from driving_interfaces.action import MoveToLocation, VisitorDetected
 
+from server_interfaces.srv import GetConsultationHour, GetProfessors
+from server_interfaces.msg import Professor
+
 from robot_common.action_client_server_helper import check_if_client_started, send_universal_goal, wait_for_universal_result, GoalAbort, GoalCanceled, GoalRejected
+from robot_common.service_client_server_helper import check_if_service_client_started, run_service_request
 
 if TYPE_CHECKING:
     from mypy_boto3_bedrock_runtime.client import BedrockRuntimeClient
@@ -46,6 +49,8 @@ PACKAGE_NAME = 'receptionist_bot'
 AUDIO_ORCHESTRATOR_ACTION = 'speechRequest'
 NAVIGATOR_ACTION = 'moveToLocation'
 VISITOR_ACTION = 'visitorDetected'
+PROF_ACTION = 'get_professors'
+PROF_INFO_ACTION = 'get_consultation_hour'
 
 TIMEOUT_START_CLIENT = 30.0
 ENV_FILE_PATH = "/home/ubuntu/turtlebot4_ws/.env"
@@ -72,6 +77,7 @@ class ReceptionistNode(Node):
         self._declare_node_parameters()
         self._declare_node_variables()
         self._start_action_clients()
+        self._add_services()
         self._start_action_server()
     
     def _declare_node_parameters(self):
@@ -105,8 +111,6 @@ class ReceptionistNode(Node):
         self._away_from_station = False
         self._lock_worker_handle = Lock()
         self._lock_callback = Lock()
-        
-        #self.get_logger().info(f"{self._define_Tool(self._dialog_script["messages"]["ask_professor"], ["Dennis Mayer", "Charlotte Braun"])}")
     
     def _start_action_clients(self) -> None:
         self.get_logger().info("Starting Action Clients ...")
@@ -126,6 +130,13 @@ class ReceptionistNode(Node):
         check_if_client_started(self.__audio_orchestrator_client, TIMEOUT_START_CLIENT)
         check_if_client_started(self.__driving_navigator_client, TIMEOUT_START_CLIENT)
         self.get_logger().info("All worker action servers reachable")
+    
+    def _add_services(self) -> None:
+        self.__get_prof_service = self.create_client(GetProfessors, PROF_ACTION)
+        self.__get_consultation_hour_info = self.create_client(GetConsultationHour, PROF_INFO_ACTION)
+        
+        check_if_service_client_started(self.__get_prof_service, TIMEOUT_START_CLIENT)
+        check_if_service_client_started(self.__get_consultation_hour_info, TIMEOUT_START_CLIENT)
     
     def _start_action_server(self) -> None:
         action_name = VISITOR_ACTION
@@ -148,23 +159,24 @@ class ReceptionistNode(Node):
             self._next_message = self._available_messages[self._dialog_script["start"]]
             self._memory = {}
             self._counter_retrys = 0
+            await self._get_professors()
             
             while self._next_message is not None:   
                 # todo check for cancel 
+                # todo implement possibilty to stop every time
                 if "end" in self._next_message and self._next_message["end"]:
                     await self._end_script()
                     continue
                 
                 match self._determine_message_type():
                     case MESSAGE_TYPE.STANDARD:
-                        if await self._react_to_standard_message() == "continue":
-                            continue
+                        await self._react_to_standard_message()
                     case MESSAGE_TYPE.DRIVE:
                         await self._react_to_drive_message()
                     case MESSAGE_TYPE.UPLOAD:
                         await self._react_to_upload_message()
                     case MESSAGE_TYPE.LOOK_FOR_CONSULTATION_HOUR:
-                        pass
+                        await self._react_to_look_for_consultation_hour()
             
             goal_handle.succeed()
             return self._assemble_result(True, "Finished")
@@ -238,6 +250,8 @@ class ReceptionistNode(Node):
                     return MESSAGE_TYPE.DRIVE
                 case "upload":
                     return MESSAGE_TYPE.UPLOAD
+                case "look_for_consultation_hour":
+                    return MESSAGE_TYPE.LOOK_FOR_CONSULTATION_HOUR
                 case _:
                     raise ValueError(f"Action not defined: {action}")
         return MESSAGE_TYPE.STANDARD
@@ -271,7 +285,7 @@ class ReceptionistNode(Node):
         if reply["choice"] == "unclear":
             self._next_message = self._available_messages[self._next_message["fallback"]]
             self._retry = True
-            return "continue"
+            return
         
         self._next_message_name = next((block["goto"] for block in self._next_message["transitions"] if block["if"] == reply["choice"]), None)
         self._next_message = self._available_messages[self._next_message_name] if self._next_message_name is not None else None
@@ -279,9 +293,7 @@ class ReceptionistNode(Node):
         for extraction in extract_list:
             self._memory[extraction] = reply[extraction]
             self.get_logger().info(f"Saved memory: {extraction}: {reply[extraction]}")
-        
-        return ""
-    
+
     async def _react_to_drive_message(self):
         if not self._next_message:
             raise ValueError("Next message not defined")
@@ -293,29 +305,26 @@ class ReceptionistNode(Node):
             self._assamble_orchestrator_goal(message, AudioOrchestrator.Goal.NO_RESPONSE)
         )
         
-        if self._next_message["target"] != "professor":
-            raise NotImplemented(f"No target with the name: {self._next_message["target"]} implemented")
-        
-        target = self._evaluate_hints_or_options(self._next_message["target"])
-        
-        target_coordinates = self._get_room_of_professor(target)
+        target_coordinates = self._get_memory_entry("drive_goal")
         self.get_logger().info(f"Coordinates: {target_coordinates}")
         
         self._away_from_station = True
         
         goal = MoveToLocation.Goal()
-        goal.x = target_coordinates[0]
-        goal.y = target_coordinates[1]
-        goal.yaw = target_coordinates[2]
+        goal.x = target_coordinates.x
+        goal.y = target_coordinates.y
+        goal.yaw = target_coordinates.yaw
         
         try:
             result: MoveToLocation.Result = await self._run_worker(self.__driving_navigator_client, goal, timeout_sec=180.0)
         except GoalAbort:
-            #todo get professor room
             self._next_message = self._available_messages[self._next_message["on_failure"]]
             return
         finally:
             await self._wait_for_result(worker_handle_audio, self._orchestrator_timeout)
+            
+        if not result.success:
+            raise GoalAbort("Couldn't reach goal")
         
         self._next_message = self._available_messages[self._next_message["on_success"]]
     
@@ -327,8 +336,8 @@ class ReceptionistNode(Node):
         
         upload_para = UploadParams()
         upload_para.message = self._next_message["message"]
-        upload_para.sender_name = self._evaluate_hints_or_options_string("name")
-        upload_para.user_id = self._get_professor_id(self._evaluate_hints_or_options("professor"))
+        upload_para.sender_name = self._get_memory_entry("name")
+        upload_para.user_id = self._get_memory_entry("professor")["id"]
         
         try:
             await self._run_worker(
@@ -340,7 +349,25 @@ class ReceptionistNode(Node):
             self._next_message = self._available_messages[self._next_message["on_failure"]]
         
         self._next_message = self._available_messages[self._next_message["on_success"]]
+    
+    async def _react_to_look_for_consultation_hour(self):
+        if not self._next_message:
+            raise ValueError("Next message not defined")
         
+        message = self._next_message["say"]
+                
+        worker_handle_audio = await self._send_goal(
+            self.__audio_orchestrator_client, 
+            self._assamble_orchestrator_goal(message, AudioOrchestrator.Goal.NO_RESPONSE)
+        )
+        try:
+            if await self._check_and_load_consulation_hour_info():
+                self._next_message = self._available_messages[self._next_message["on_success"]]
+            else:
+                self._next_message = self._available_messages[self._next_message["on_failure"]]
+        finally:
+            await self._wait_for_result(worker_handle_audio, self._orchestrator_timeout)
+            
         
     def _evaluate_llm_response(self, response, transition_list, extract_id_options):
         if "message" not in response["output"]:
@@ -368,7 +395,7 @@ class ReceptionistNode(Node):
         transcribtion_prompt = None
         if self._next_message and "transcriber_hints" in self._next_message:
             try:
-                transcribtion_prompt = "Das gesagte enthält: " + self._evaluate_hints_or_options_string(self._next_message["transcriber_hints"])   
+                transcribtion_prompt = "Das gesagte enthält: " + self._get_memory_entry_as_string(self._next_message["transcriber_hints"])   
             except Exception:
                 self.get_logger().warning(f"Couldn't find {self._next_message["transcriber_hints"]} in memory")  
         return transcribtion_prompt
@@ -383,51 +410,58 @@ class ReceptionistNode(Node):
             goal.upload_parameters = upload_parameters
         return goal
     
-    def _get_professors(self) -> list[Any]:
+    async def _get_professors(self) -> list[Any]:
         if "professors" in self._memory:
             return self._memory["professors"]
         
-        #todo load professors via API
-        #todo as json?
-        professors = [{"Titel": "Prof. Dr.", "Vorname": "Bernd", "Nachname": "Lichte"}, {"Titel": "Prof. Dr.", "Vorname": "Michael", "Nachname": "Kolbus"}]
+        response: GetProfessors.Response = await run_service_request(self, self.__get_prof_service, GetProfessors.Request(), timeout_sec=10.0)
+        
+        professors = []
+        for professor in response.professors:
+            professors.append({"id": professor.id, "title": professor.title, "first_name": professor.first_name, "last_name": professor.last_name})
+            
         self._memory["professors"] = professors
         return professors
     
-    def _get_room_of_professor(self, professor):
-        #todo API get the location of the professor
-        return [1.0,2.0,180]
+    async def _check_and_load_consulation_hour_info(self) -> bool:
+        request = GetConsultationHour.Request()
+        
+        professor = self._get_memory_entry("professor")
+        if "id" not in professor:
+            raise ValueError(f"Professor in Memory has no field id: {professor}")
+        request.prof_id = professor["id"]
+        
+        response: GetConsultationHour.Response = await run_service_request(self, self.__get_consultation_hour_info, request, timeout_sec=10.0)
+        
+        self._memory["professor_room"] = response.room_name
+        current_consultation_hour = response.current_consultation_hour
+        
+        if current_consultation_hour:
+            self._memory["drive_goal"] = {"x": response.room_coordinates.x, "y": response.room_coordinates.y, "yaw": response.room_coordinates.yaw}
+        else:
+            self._memory["next_consultation_hour"] = response.next_consultation_hour
+        
+        return current_consultation_hour
     
-    def _get_professor_id(self, professor):
-        #todo API implementation
-        return 0
+    def _get_memory_entry(self, name: str):
+        if name in self._memory:
+            return self._memory[name]
+        raise ValueError(f"{name} not in Memory!")
     
-    def _evaluate_hints_or_options_string(self, hint_or_option: str):
-        return_para = None
-        hint_or_option_striped = hint_or_option.strip()
-        match hint_or_option_striped:
+    def _get_memory_entry_as_string(self, name: str):
+        match name:
             case "professors":
                 return_para = []
-                for professor in self._get_professors():
-                    return_para.append(f"{professor.Titel} {professor.Vorname} {professor.Nachname}")
+                for professor in self._get_memory_entry("professors"):
+                    return_para.append(f"{professor.title} {professor.first_name} {professor.last_name}")
             case _:
-                if hint_or_option_striped in self._memory:
-                    return_para = self._memory[hint_or_option_striped]
-
+                return_para = self._get_memory_entry(name)
+        
         if isinstance(return_para, str):
             return return_para
         if isinstance(return_para, list):
             return ", ".join(return_para)
-        raise ValueError(f"{hint_or_option_striped} not in memory or available via API")
-    
-    def _evaluate_hints_or_options(self, hint_or_option: str):
-        hint_or_option_striped = hint_or_option.strip()
-        match hint_or_option_striped.strip():
-            case "professors":
-                return self._get_professors()
-            case _:
-                if hint_or_option_striped in self._memory:
-                    return self._memory[hint_or_option_striped]
-                raise ValueError(f"{hint_or_option_striped} not in memory or available via API")
+        raise ValueError(f"Error: {name} has not a string convertable object: {return_para}")
     
     def _goal_callback(self, goal_request):
         if not self._lock_callback.acquire(blocking=False):
@@ -447,11 +481,12 @@ class ReceptionistNode(Node):
         if "extract" in message:
             extract = message["extract"]
             for entry in extract:
-                input_properties[entry] = {"type": "string", "description": extract[entry]["description"]}
+                type_extract = entry["type"] if "type" in entry else "string"
+                input_properties[entry] = {"type": type_extract, "description": entry["description"]}
                 required.append(entry)
                 extract_ids.append(entry)
                 if "options" in entry:
-                    options = self._evaluate_hints_or_options(entry["options"])
+                    options = self._get_memory_entry(entry["options"])
                     input_properties[entry]["options"] = options
                     extract_ids_options[entry] = (options)
                 

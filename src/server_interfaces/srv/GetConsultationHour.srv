@@ -1,7 +1,6 @@
-Professor professor
+uint32 prof_id
 ---
 bool current_consultation_hour
 string room_name
 string next_consultation_hour
-int64 professor_id
 RoomCoordinates room_coordinates
