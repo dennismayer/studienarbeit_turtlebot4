@@ -21,7 +21,7 @@ setup(
     maintainer='ubuntu',
     maintainer_email='dennis.mayer1204@gmail.com',
     description='TODO: Package description',
-    license='TODO: License declaration',
+    license='Apache-2.0',
     extras_require={
         'test': [
             'pytest',
@@ -29,7 +29,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'receptionistNode = receptionist_bot.ReceptionistNode.py:main'
+            'receptionistNode = receptionist_bot.ReceptionistNode:main'
         ],
     },
 )
