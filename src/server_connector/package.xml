@@ -10,6 +10,9 @@
   <depend>rclpy</depend>
   <depend>server_interfaces</depend>
 
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>robot_common</exec_depend>
   <exec_depend>python3-requests</exec_depend>
   <exec_depend>python3-dotenv</exec_depend>
 

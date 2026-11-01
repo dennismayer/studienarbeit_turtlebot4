@@ -137,7 +137,7 @@
     player_action: "/AudioWorkers/audioPlayer"
     listener_action: "/AudioWorkers/audioListener"
     transcriber_action: "/AudioWorkers/audioTranscriber"
-    uploader_action: "TMP_Upload_client"
+    uploader_action: "upload_file"
 
     # Timeout in seconds for action calls.
     action_timeout: 5.0
