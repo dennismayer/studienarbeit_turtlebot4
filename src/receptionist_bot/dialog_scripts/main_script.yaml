@@ -21,6 +21,7 @@ base_prompt: |
 
 start: ask_what_to_do
 give_up: give_up_goodbye
+error_say: "Tut mir leid, ich muss wegen eines Fehlers abbrechen. Bitte wenden Sie sich an das Sekretariat."
 
 messages:
   ask_what_to_do:

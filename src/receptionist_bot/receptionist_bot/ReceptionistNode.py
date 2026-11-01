@@ -31,6 +31,7 @@ from driving_interfaces.action import MoveToLocation, VisitorDetected
 from server_interfaces.srv import GetConsultationHour, GetProfessors
 from server_interfaces.msg import Professor
 
+from robot_common.parameter_helper import get_param
 from robot_common.action_client_server_helper import check_if_client_started, send_universal_goal, wait_for_universal_result, GoalAbort, GoalCanceled, GoalRejected
 from robot_common.service_client_server_helper import check_if_service_client_started, run_service_request
 
@@ -44,23 +45,6 @@ if TYPE_CHECKING:
 
 DEFAULT_NODE_NAME = 'Receptionist'
 PACKAGE_NAME = 'receptionist_bot'
-
-# parameters for config yaml
-AUDIO_ORCHESTRATOR_ACTION = 'speechRequest'
-NAVIGATOR_ACTION = 'moveToLocation'
-VISITOR_ACTION = 'visitorDetected'
-PROF_ACTION = 'get_professors'
-PROF_INFO_ACTION = 'get_consultation_hour'
-
-TIMEOUT_START_CLIENT = 30.0
-ENV_FILE_PATH = "/home/ubuntu/turtlebot4_ws/.env"
-DIALOG_SCRIPT_NAME = "main_script.yaml"
-ACTION_TIMEOUT = 5.0
-ORCHESTRATOR_TIMEOUT = 120.0
-MAX_TRY_SPEECH = 3
-COORDINATE_HOME_BASE_X = 0.0
-COORDINATE_HOME_BASE_Y = 0.0
-COORDINATE_HOME_BASE_YAW = 0.0
 
 class MESSAGE_TYPE(Enum):
     STANDARD  = 0
@@ -81,65 +65,189 @@ class ReceptionistNode(Node):
         self._start_action_server()
     
     def _declare_node_parameters(self):
-        pass
-    
+        self.declare_parameters('', [
+            ("action_name", "visitorDetected",
+                ParameterDescriptor(
+                    description="Name of the action server that the visitor detector sends visits to",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_STRING)),
+            ("audio_orchestrator_action", "speechRequest",
+                ParameterDescriptor(
+                    description="Fully qualified name of the AudioOrchestrator action server",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_STRING)),
+            ("navigator_action", "moveToLocation",
+                ParameterDescriptor(
+                    description="Fully qualified name of the MoveToLocation action server",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_STRING)),
+            ("professors_service", "get_professors",
+                ParameterDescriptor(
+                    description="Fully qualified name of the GetProfessors service",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_STRING)),
+            ("consultation_hour_service", "get_consultation_hour",
+                ParameterDescriptor(
+                    description="Fully qualified name of the GetConsultationHour service",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_STRING)),
+            ("env_file_path", "/home/ubuntu/turtlebot4_ws/.env",
+                ParameterDescriptor(
+                    description="Absolute path to the .env file with the AWS credentials",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_STRING)),
+            ("dialog_script_name", "main_script.yaml",
+                ParameterDescriptor(
+                    description="File name of the dialog script inside the package's dialog_scripts directory",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_STRING)),
+            ("max_speech_tries", 3,
+                ParameterDescriptor(
+                    description="Answers per question, including the first, before the robot gives up",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_INTEGER)),
+            ("home_base_x", 0.0,
+                ParameterDescriptor(
+                    description="x coordinate in meters of the station the robot returns to after a visit",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_DOUBLE)),
+            ("home_base_y", 0.0,
+                ParameterDescriptor(
+                    description="y coordinate in meters of the station the robot returns to after a visit",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_DOUBLE)),
+            ("home_base_yaw", 0.0,
+                ParameterDescriptor(
+                    description="Heading in radians of the station the robot returns to after a visit",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_DOUBLE)),
+            ("action_timeout", 5.0,
+                ParameterDescriptor(
+                    description="Timeout in seconds for action calls",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_DOUBLE)),
+            ("client_start_timeout", 30.0,
+                ParameterDescriptor(
+                    description="Timeout in seconds for each action and service server to become available at startup",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_DOUBLE)),
+            ("orchestrator_timeout", 120.0,
+                ParameterDescriptor(
+                    description="Timeout in seconds for the AudioOrchestrator result",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_DOUBLE)),
+            ("drive_timeout", 180.0,
+                ParameterDescriptor(
+                    description="Timeout in seconds for one drive, to a professor or back to the station",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_DOUBLE)),
+            ("service_timeout", 10.0,
+                ParameterDescriptor(
+                    description="Timeout in seconds for the GetProfessors and GetConsultationHour services",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_DOUBLE)),
+            ("llm_region", "eu-central-1",
+                ParameterDescriptor(
+                    description="AWS region of the Bedrock runtime",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_STRING)),
+            ("llm_model_id", "eu.amazon.nova-2-lite-v1:0",
+                ParameterDescriptor(
+                    description="Bedrock model ID that evaluates the visitor's answers",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_STRING)),
+            ("llm_max_tokens", 300,
+                ParameterDescriptor(
+                    description="Maximum number of tokens in one LLM reply",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_INTEGER)),
+            ("llm_connect_timeout", 5.0,
+                ParameterDescriptor(
+                    description="Timeout in seconds for connecting to Bedrock",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_DOUBLE)),
+            ("llm_read_timeout", 15.0,
+                ParameterDescriptor(
+                    description="Timeout in seconds for one Bedrock reply",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_DOUBLE)),
+            ("llm_max_attempts", 2,
+                ParameterDescriptor(
+                    description="Bedrock attempts per LLM call, including the first",
+                    read_only=True,
+                    type=ParameterType.PARAMETER_INTEGER)),
+        ])
+
     def _declare_node_variables(self):
-        if not load_dotenv(ENV_FILE_PATH):
-            raise FileNotFoundError(f"No .env file at: {ENV_FILE_PATH}")
-        
-        script_path = Path(get_package_share_directory(PACKAGE_NAME)) / "dialog_scripts" / DIALOG_SCRIPT_NAME
+        env_file_path = get_param(self, "env_file_path", str)
+        if not load_dotenv(env_file_path):
+            raise FileNotFoundError(f"No .env file at: {env_file_path}")
+
+        script_path = Path(get_package_share_directory(PACKAGE_NAME)) / "dialog_scripts" / get_param(self, "dialog_script_name", str)
         if not os.path.isfile(script_path):
             raise FileNotFoundError(f"No dialog file at: {script_path}")
-        
+
         with script_path.open("r", encoding="utf-8") as file:
             self._dialog_script = yaml.safe_load(file)
         self._check_script_file()
-        
+
         self._bedrock_client: "BedrockRuntimeClient" = boto3.client(
             'bedrock-runtime',
-            region_name="eu-central-1",
+            region_name=get_param(self, "llm_region", str),
             config=Config(
-                connect_timeout=5,
-                read_timeout=15,                 # a short dialog reply takes ~1 s; don't let the robot hang for an hour
-                retries={"max_attempts": 2},
+                connect_timeout=get_param(self, "llm_connect_timeout", float),
+                read_timeout=get_param(self, "llm_read_timeout", float),
+                retries={"max_attempts": get_param(self, "llm_max_attempts", int)},
             )
         )
-        
-        self._action_timeout = ACTION_TIMEOUT
-        self._orchestrator_timeout = ORCHESTRATOR_TIMEOUT
+        self._llm_model_id = get_param(self, "llm_model_id", str)
+        self._llm_max_tokens = get_param(self, "llm_max_tokens", int)
+
+        self._action_timeout = get_param(self, "action_timeout", float)
+        self._client_start_timeout = get_param(self, "client_start_timeout", float)
+        self._orchestrator_timeout = get_param(self, "orchestrator_timeout", float)
+        self._drive_timeout = get_param(self, "drive_timeout", float)
+        self._service_timeout = get_param(self, "service_timeout", float)
+        self._max_speech_tries = get_param(self, "max_speech_tries", int)
+        self._home_base = {
+            "x": get_param(self, "home_base_x", float),
+            "y": get_param(self, "home_base_y", float),
+            "yaw": get_param(self, "home_base_yaw", float),
+        }
+
         self._active_worker_handle = []
         self._away_from_station = False
         self._lock_worker_handle = Lock()
         self._lock_callback = Lock()
-    
+
     def _start_action_clients(self) -> None:
         self.get_logger().info("Starting Action Clients ...")
-        
+
         self.__audio_orchestrator_client = ActionClient(
             self,
             AudioOrchestrator,
-            AUDIO_ORCHESTRATOR_ACTION
+            get_param(self, "audio_orchestrator_action", str)
         )
-        
+
         self.__driving_navigator_client = ActionClient(
-            self, 
+            self,
             MoveToLocation,
-            NAVIGATOR_ACTION
+            get_param(self, "navigator_action", str)
         )
-        
-        check_if_client_started(self.__audio_orchestrator_client, TIMEOUT_START_CLIENT)
-        check_if_client_started(self.__driving_navigator_client, TIMEOUT_START_CLIENT)
+
+        check_if_client_started(self.__audio_orchestrator_client, self._client_start_timeout)
+        check_if_client_started(self.__driving_navigator_client, self._client_start_timeout)
         self.get_logger().info("All worker action servers reachable")
-    
+
     def _add_services(self) -> None:
-        self.__get_prof_service = self.create_client(GetProfessors, PROF_ACTION)
-        self.__get_consultation_hour_info = self.create_client(GetConsultationHour, PROF_INFO_ACTION)
-        
-        check_if_service_client_started(self.__get_prof_service, TIMEOUT_START_CLIENT)
-        check_if_service_client_started(self.__get_consultation_hour_info, TIMEOUT_START_CLIENT)
-    
+        self.__get_prof_service = self.create_client(GetProfessors, get_param(self, "professors_service", str))
+        self.__get_consultation_hour_info = self.create_client(GetConsultationHour, get_param(self, "consultation_hour_service", str))
+
+        check_if_service_client_started(self.__get_prof_service, self._client_start_timeout)
+        check_if_service_client_started(self.__get_consultation_hour_info, self._client_start_timeout)
+
     def _start_action_server(self) -> None:
-        action_name = VISITOR_ACTION
+        action_name = get_param(self, "action_name", str)
         self.__action_server = ActionServer(
             node=self,
             action_type=VisitorDetected,
@@ -205,12 +313,12 @@ class ReceptionistNode(Node):
             
             if self._away_from_station:
                 goal = MoveToLocation.Goal()
-                goal.x = COORDINATE_HOME_BASE_X
-                goal.y = COORDINATE_HOME_BASE_Y
-                goal.yaw = COORDINATE_HOME_BASE_YAW
+                goal.x = self._home_base["x"]
+                goal.y = self._home_base["y"]
+                goal.yaw = self._home_base["yaw"]
                 
                 try:
-                    await self._run_worker(self.__driving_navigator_client, goal, timeout_sec=180.0)
+                    await self._run_worker(self.__driving_navigator_client, goal, timeout_sec=self._drive_timeout)
                 except Exception as e:
                     self.get_logger().error(f"Couldn't get back to station: {e}")
                     raise RuntimeError("Can not return to station") from e
@@ -236,7 +344,7 @@ class ReceptionistNode(Node):
         if not self._next_message:
             raise ValueError("next message not defined")
         if self._retry:
-            if self._counter_retrys >= (MAX_TRY_SPEECH - 1):
+            if self._counter_retrys >= (self._max_speech_tries - 1):
                 self._next_message = self._available_messages[self._dialog_script["give_up"]]
                 return None
             message_str = self._override_retry_message if self._override_retry_message else self._next_message["retry_say"]
@@ -354,7 +462,7 @@ class ReceptionistNode(Node):
         goal.yaw = target_coordinates["yaw"]
         
         try:
-            result: MoveToLocation.Result = await self._run_worker(self.__driving_navigator_client, goal, timeout_sec=180.0)
+            result: MoveToLocation.Result = await self._run_worker(self.__driving_navigator_client, goal, timeout_sec=self._drive_timeout)
             if not result.success:
                 raise GoalAbort("Couldn't reach goal")
         except GoalAbort:
@@ -463,7 +571,7 @@ class ReceptionistNode(Node):
         if "professors" in self._memory:
             return self._memory["professors"]
         
-        response: GetProfessors.Response = await run_service_request(self, self.__get_prof_service, GetProfessors.Request(), timeout_sec=10.0)
+        response: GetProfessors.Response = await run_service_request(self, self.__get_prof_service, GetProfessors.Request(), timeout_sec=self._service_timeout)
         
         professors = []
         for professor in response.professors:
@@ -480,7 +588,7 @@ class ReceptionistNode(Node):
             raise ValueError(f"Professor in Memory has no field id: {professor}")
         request.prof_id = professor["id"]
         
-        response: GetConsultationHour.Response = await run_service_request(self, self.__get_consultation_hour_info, request, timeout_sec=10.0)
+        response: GetConsultationHour.Response = await run_service_request(self, self.__get_consultation_hour_info, request, timeout_sec=self._service_timeout)
         
         if response.return_code == GetConsultationHour.Response.ERROR:
             raise ValueError("Error while trying to reach Server!")
@@ -541,7 +649,7 @@ class ReceptionistNode(Node):
         errors = []
         script = self._dialog_script
 
-        for key in ("base_prompt", "start", "give_up", "messages"):
+        for key in ("base_prompt", "start", "give_up", "error_say", "messages"):
             if key not in script:
                 errors.append(f"Missing top level key '{key}'")
         if errors:
@@ -686,14 +794,14 @@ class ReceptionistNode(Node):
     
     def _call_llm_api(self, system_prompt: str, messages: Sequence, reply_tool):
         return self._bedrock_client.converse(
-            modelId="eu.amazon.nova-2-lite-v1:0",
+            modelId=self._llm_model_id,
             system=[
                 {
                     "text": system_prompt
                 }
             ],
             messages=messages,
-            inferenceConfig={"maxTokens": 300},
+            inferenceConfig={"maxTokens": self._llm_max_tokens},
             toolConfig={
                 "tools": [reply_tool],
                 "toolChoice": {"tool": {"name": reply_tool["toolSpec"]["name"]}},   # force the structured answer
@@ -749,9 +857,9 @@ class ReceptionistNode(Node):
         self.get_logger().error(f"Request aborted: {error_msg}")
         try:
             goal = AudioOrchestrator.Goal()
-            goal.question_or_sentence = "Tut mir leid, ich muss fehlerbedingt abbrechen."
+            goal.question_or_sentence = self._dialog_script["error_say"]
             goal.response_handling = AudioOrchestrator.Goal.NO_RESPONSE
-            await self._run_worker(self.__audio_orchestrator_client, goal, timeout_sec=ORCHESTRATOR_TIMEOUT) 
+            await self._run_worker(self.__audio_orchestrator_client, goal, timeout_sec=self._orchestrator_timeout) 
         except Exception as e:
             self.get_logger().error(f"Not able to play end at error: {e}")
         goal_handle.abort()

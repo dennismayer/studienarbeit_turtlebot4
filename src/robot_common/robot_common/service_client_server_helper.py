@@ -1,7 +1,7 @@
 from rclpy.client import Client
 from rclpy.node import Node
 
-from action_client_server_helper import GoalAbort, await_with_timeout
+from robot_common.action_client_server_helper import GoalAbort, await_with_timeout
 
 def check_if_service_client_started(client: Client, timeout: float = 45.0):
     """Wait for the service server to become available or raise a RuntimeError.

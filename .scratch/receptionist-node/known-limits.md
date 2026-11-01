@@ -4,6 +4,8 @@ Accepted for now; revisit when they start to matter.
 
 ## Failed drive home leaves the node in an unclear state
 
+Tracked in https://github.com/dennismayer/studienarbeit_turtlebot4/issues/5
+
 Where: `ReceptionistNode._execute_callback`, the `finally` block that drives back to the station.
 
 When the drive home fails, the callback raises `RuntimeError` inside `finally`. Intended behaviour is that the robot stops serving visitors. What actually happens:

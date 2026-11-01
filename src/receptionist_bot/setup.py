@@ -13,11 +13,13 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/dialog_scripts', glob('dialog_scripts/*.yaml')),
+        ('share/' + package_name + '/config', glob('config/*.yaml')),
+        ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='ubuntu',
-    maintainer_email='charlottebraun.lhg@gmail.com',
+    maintainer_email='dennis.mayer1204@gmail.com',
     description='TODO: Package description',
     license='TODO: License declaration',
     extras_require={
@@ -27,6 +29,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'receptionistNode = receptionist_bot.ReceptionistNode.py:main'
         ],
     },
 )
