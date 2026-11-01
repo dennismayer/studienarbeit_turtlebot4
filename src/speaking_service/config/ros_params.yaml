@@ -86,6 +86,11 @@
     # start of the first word isn't cut off.
     pre_start_recording_time: 0.5
 
+    # Seconds of trailing silence kept after the last speech block, so the
+    # end of the last word isn't cut off. The rest of the silence is dropped.
+    # Limited to the goal's silence_duration.
+    post_recording_time: 0.3
+
 # ---------------------------------------------------------------------------
 # AudioTranscriberWorker: speech-to-text with faster-whisper
 # ---------------------------------------------------------------------------
