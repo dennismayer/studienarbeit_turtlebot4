@@ -253,7 +253,11 @@ class ConnectorServer(Node):
             if not api_response.ok:
                 raise ValueError(f"Received wrong status code: {api_response.status_code}")
 
-            response_content = api_response.json()
+            response_content = {}
+            
+            if api_response.status_code == 200:
+                response_content = api_response.json()
+
             self.get_logger().info(f"Message created on server (status {api_response.status_code})")
 
             if "url" in response_content and response_content["url"]:

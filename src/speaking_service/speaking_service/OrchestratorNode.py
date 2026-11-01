@@ -71,7 +71,7 @@ class SpeechOrchestratorNode(Node):
                     description="Fully qualified name of the AudioTranscriberWorker action server",
                     read_only=True,
                     type=ParameterType.PARAMETER_STRING)),
-            ("uploader_action", "TMP_Upload_client",
+            ("uploader_action", "upload_file",
                 ParameterDescriptor(
                     description="Fully qualified name of the UploadFile action server",
                     read_only=True,
@@ -231,7 +231,7 @@ class SpeechOrchestratorNode(Node):
             
             # check if upload response or do something else
             if request.response_handling == AudioOrchestrator.Goal.UPLOAD_RESPONSE:
-                return await self._goal_upload_handling(goal_handle, listener_result.file_path)
+                return await self._goal_upload_handling(goal_handle, listener_result.file_path, listener_result.duration)
             
             # last case: Transcribing
             return await self._goal_transcribing_handling(goal_handle, listener_result.file_path, request)
@@ -395,23 +395,35 @@ class SpeechOrchestratorNode(Node):
         goal_handle.succeed()
         return self._assemble_result(True, "NoResponse", "")
     
-    async def _goal_upload_handling(self, goal_handle: ServerGoalHandle, file_path: str):
+    async def _goal_upload_handling(self, goal_handle: ServerGoalHandle, file_path: str, duration: float):
         self._send_state_feedback(AudioOrchestrator.Feedback.UPLOADING, goal_handle)
         self._check_for_cancel_request(goal_handle)
         
+        request: AudioOrchestrator.Goal = goal_handle.request
+        
         goal = UploadFile.Goal()
         goal.file_path = file_path
-        goal.upload_params = goal_handle.request.upload_parameters
+        goal.user_id = request.upload_parameters.user_id
+        goal.message = request.upload_parameters.message
+        goal.sender_name = request.upload_parameters.sender_name
+        goal.send_file = True
+        goal.audio_duration_s = round(duration)
         result: UploadFile.Result = await self._run_worker(
             self.__server_upload_client,
             goal,
+            feedback_callback=self._feedback_uploader,
             timeout_sec=self.__uploader_timeout
         )
         if not result.success:
             raise GoalAbort(f"Upload failed with message: {result.message}")
         
+        self.get_logger().info("Upload successful!")
+        
         goal_handle.succeed()
         return self._assemble_result(True, "UploadResponse", "")
+    
+    def _feedback_uploader(self, msg):
+        self.get_logger().info(f"State of Upload: {msg.feedback.state}")
     
     async def _goal_transcribing_handling(self, goal_handle: ServerGoalHandle, file_path: str, request):
         self.get_logger().info("Transcribing recording...")
