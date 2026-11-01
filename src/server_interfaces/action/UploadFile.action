@@ -1,5 +1,9 @@
 string file_path
-speaking_interfaces/UploadParams upload_params
+uint32 user_id
+string sender_name
+string message
+uint32 audio_duration_s
+bool send_file
 ---
 bool success
 string message

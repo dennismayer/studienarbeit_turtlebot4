@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            "serverConnectorNode = server_connector.ConnectorNode:main"
         ],
     },
 )
