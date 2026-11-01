@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>robot_bring_up</name>
+  <version>0.0.0</version>
+  <description>Launch files that start the whole receptionist bot, as the real system or as a test system on a robot that must not move.</description>
+  <maintainer email="dennis.mayer1204@gmail.com">Dennis Mayer</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>speaking_service</exec_depend>
+  <exec_depend>server_connector</exec_depend>
+  <exec_depend>receptionist_bot</exec_depend>
+  <exec_depend>driving_service</exec_depend>
+  <exec_depend>turtlebot4_navigation</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
