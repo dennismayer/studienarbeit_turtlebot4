@@ -12,6 +12,10 @@ from ros_test_tools import isolated_env
      'nav_retry_attempts must be >= 1'),
     ('driving_service.VisitorDetectorNode', 'stability_threshold:=1',
      'stability_threshold must be >= 3'),
+    ('driving_service.FakeNavigatorNode', 'drive_duration:=-1.0',
+     'drive_duration must be >= 0'),
+    ('driving_service.ButtonVisitorTriggerNode', 'button:=button_power',
+     'button must be button_1 or button_2'),
 ])
 def test_node_with_an_invalid_parameter_exits_with_an_error(module, bad_param, message):
     process = subprocess.run(

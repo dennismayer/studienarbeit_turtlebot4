@@ -31,6 +31,8 @@ setup(
         'console_scripts': [
             'navigatorNode = driving_service.NavigatorNode:main',
             'visitorDetectorNode = driving_service.VisitorDetectorNode:main',
+            'fakeNavigatorNode = driving_service.FakeNavigatorNode:main',
+            'buttonVisitorTriggerNode = driving_service.ButtonVisitorTriggerNode:main',
         ],
     },
 )
