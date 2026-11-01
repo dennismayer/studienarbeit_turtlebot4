@@ -2,6 +2,8 @@ import sys
 from enum import Enum
 from pathlib import Path
 import os
+import math
+import time
 from threading import Lock
 import numpy as np
 from typing import TYPE_CHECKING, Mapping, Any, Sequence
@@ -268,6 +270,7 @@ class ReceptionistNode(Node):
             self._next_message = self._available_messages[self._dialog_script["start"]]
             self._memory = {}
             self._counter_retrys = 0
+            self.get_logger().info(f"Visit started at step '{self._dialog_script['start']}'")
             await self._get_professors()
             
             while self._next_message is not None:   
@@ -279,7 +282,12 @@ class ReceptionistNode(Node):
                     await self._end_script()
                     continue
                 
-                match self._determine_message_type():
+                message_type = self._determine_message_type()
+                self.get_logger().info(
+                    f"Step '{self._message_name(self._next_message)}' ({message_type.name.lower()})"
+                    + (f", retry {self._counter_retrys + 1}" if self._retry else ""))
+                self.get_logger().debug(f"Memory: {self._memory_for_log()}")
+                match message_type:
                     case MESSAGE_TYPE.STANDARD:
                         await self._react_to_standard_message()
                     case MESSAGE_TYPE.DRIVE:
@@ -289,6 +297,7 @@ class ReceptionistNode(Node):
                     case MESSAGE_TYPE.LOOK_FOR_CONSULTATION_HOUR:
                         await self._react_to_look_for_consultation_hour()
             
+            self.get_logger().info("Visit finished")
             goal_handle.succeed()
             return self._assemble_result(True, "Finished")
         
@@ -312,6 +321,7 @@ class ReceptionistNode(Node):
                 self._active_worker_handle.clear()
             
             if self._away_from_station:
+                self.get_logger().info(f"Driving back to the station {self._home_base}")
                 goal = MoveToLocation.Goal()
                 goal.x = self._home_base["x"]
                 goal.y = self._home_base["y"]
@@ -323,6 +333,7 @@ class ReceptionistNode(Node):
                     self.get_logger().error(f"Couldn't get back to station: {e}")
                     raise RuntimeError("Can not return to station") from e
                 
+                self.get_logger().info("Back at the station")
                 self._away_from_station = False
                 
             #release lock
@@ -335,6 +346,8 @@ class ReceptionistNode(Node):
         goal = AudioOrchestrator.Goal()
         goal.question_or_sentence = self._next_message["say"].format(**self._memory)
         goal.response_handling = AudioOrchestrator.Goal.NO_RESPONSE
+        self.get_logger().info(
+            f"Last step '{self._message_name(self._next_message)}', robot says: {goal.question_or_sentence!r}")
         
         await self._run_worker(self.__audio_orchestrator_client, goal, timeout_sec=self._orchestrator_timeout)
         
@@ -345,6 +358,9 @@ class ReceptionistNode(Node):
             raise ValueError("next message not defined")
         if self._retry:
             if self._counter_retrys >= (self._max_speech_tries - 1):
+                self.get_logger().info(
+                    f"No usable answer after {self._max_speech_tries} tries, "
+                    f"giving up with '{self._dialog_script['give_up']}'")
                 self._next_message = self._available_messages[self._dialog_script["give_up"]]
                 return None
             message_str = self._override_retry_message if self._override_retry_message else self._next_message["retry_say"]
@@ -386,12 +402,19 @@ class ReceptionistNode(Node):
             AudioOrchestrator.Goal.TRANSCRIBE_RESPONSE, 
             transcribe_prompt=self._get_transcription_prompt())
         
+        self.get_logger().info(f"Robot says: {goal.question_or_sentence!r}")
+        if goal.transcriber_parameters.initial_prompt:
+            self.get_logger().debug(f"Transcriber hint: {goal.transcriber_parameters.initial_prompt!r}")
+        
         orchestrator_result = await self._run_worker(self.__audio_orchestrator_client, goal, timeout_sec=self._orchestrator_timeout)
         
         if not orchestrator_result.transcribed_text:
+            self.get_logger().info(
+                f"Visitor said nothing, asking again via '{self._next_message['fallback']}'")
             self._next_message = self._available_messages[self._next_message["fallback"]]
             self._retry = True
             return
+        self.get_logger().info(f"Visitor said: {orchestrator_result.transcribed_text!r}")
         
         message = {
             "role": "user",
@@ -401,12 +424,20 @@ class ReceptionistNode(Node):
         system_prompt = self._dialog_script["base_prompt"] + "\n" + self._next_message["prompt"]
         
         extract_list, transition_list, extract_id_options, tool = self._define_Tool(self._next_message)
+        self.get_logger().debug(f"LLM system prompt:\n{system_prompt}")
+        self.get_logger().debug(f"LLM tool schema: {tool['toolSpec']['inputSchema']['json']}")
         
+        llm_start = time.monotonic()
         response = self._call_llm_api(system_prompt, [message], tool)
+        self.get_logger().debug(
+            f"LLM answered in {time.monotonic() - llm_start:.2f} s "
+            f"(stop reason {response.get('stopReason')}, usage {response.get('usage')})")
         
         reply = self._evaluate_llm_response(response, transition_list, extract_id_options)
         
         if reply["choice"] == "unclear":
+            self.get_logger().info(
+                f"Answer unclear, asking again via '{self._next_message['fallback']}'")
             self._next_message = self._available_messages[self._next_message["fallback"]]
             self._retry = True
             return
@@ -427,15 +458,18 @@ class ReceptionistNode(Node):
         
         for transition_block in self._next_message["transitions"]:
             if transition_block["if"] == reply["choice"]:
+                self.get_logger().info(f"Choice '{reply['choice']}' -> step '{transition_block['goto']}'")
                 self._next_message = self._available_messages[transition_block["goto"]]
                 
                 #set variable
                 if "set" in transition_block:
                     for name_variable in transition_block["set"]:
                         self._memory[name_variable] = transition_block["set"][name_variable]
+                        self.get_logger().info(f"Set memory: {name_variable}: {self._memory[name_variable]}")
                 
                 # load retry_say text
                 if "retry_say" in transition_block:
+                    self.get_logger().info("Asking the same question again with the transition's retry_say")
                     self._override_retry_message = transition_block["retry_say"]
                     self._retry = True
                     return
@@ -452,7 +486,7 @@ class ReceptionistNode(Node):
         )
         
         target_coordinates = self._get_memory_entry("drive_goal")
-        self.get_logger().info(f"Coordinates: {target_coordinates}")
+        self.get_logger().info(f"Driving to {target_coordinates}")
         
         self._away_from_station = True
         
@@ -462,10 +496,14 @@ class ReceptionistNode(Node):
         goal.yaw = target_coordinates["yaw"]
         
         try:
+            drive_start = time.monotonic()
             result: MoveToLocation.Result = await self._run_worker(self.__driving_navigator_client, goal, timeout_sec=self._drive_timeout)
             if not result.success:
-                raise GoalAbort("Couldn't reach goal")
-        except GoalAbort:
+                raise GoalAbort(f"Couldn't reach goal: {result.message}")
+            self.get_logger().info(
+                f"Reached the goal in {time.monotonic() - drive_start:.1f} s ({result.attempts} attempt(s))")
+        except GoalAbort as e:
+            self.get_logger().warning(f"Drive failed, going to '{self._next_message['on_failure']}': {e}")
             self._next_message = self._available_messages[self._next_message["on_failure"]]
             return
         finally:
@@ -486,6 +524,9 @@ class ReceptionistNode(Node):
         upload_para.sender_name = self._get_memory_entry("name")
         upload_para.user_id = self._get_memory_entry("professor")["id"]
         upload_para.send_file = self._memory.get("send_file", False)
+        self.get_logger().info(
+            f"Sending note to professor id {upload_para.user_id} from {upload_para.sender_name!r} "
+            f"({'with' if upload_para.send_file else 'without'} recording): {upload_para.message!r}")
         
         try:
             await self._run_worker(
@@ -493,10 +534,12 @@ class ReceptionistNode(Node):
                 self._assamble_orchestrator_goal(message, AudioOrchestrator.Goal.UPLOAD_RESPONSE,upload_parameters=upload_para),
                 timeout_sec=self._orchestrator_timeout
             )
-        except GoalAbort:
+        except GoalAbort as e:
+            self.get_logger().warning(f"Note not sent, going to '{self._next_message['on_failure']}': {e}")
             self._next_message = self._available_messages[self._next_message["on_failure"]]
             return
         
+        self.get_logger().info("Note sent")
         self._next_message = self._available_messages[self._next_message["on_success"]]
     
     async def _react_to_look_for_consultation_hour(self):
@@ -511,11 +554,14 @@ class ReceptionistNode(Node):
         )
         try:
             if await self._check_and_load_consulation_hour_info():
+                self.get_logger().info(f"Consultation hour now in room {self._memory['professor_room']!r}")
                 self._next_message = self._available_messages[self._next_message["on_success"]]
             else:
                 if self._get_memory_entry("no_consultation_hour"):
+                    self.get_logger().info("Professor has no consultation hours")
                     self._next_message = self._available_messages[self._next_message["on_no_consultation_hour"]]
                 else:
+                    self.get_logger().info(f"No consultation hour now, next one: {self._memory['next_consultation_hour']!r}")
                     self._next_message = self._available_messages[self._next_message["on_not_now"]]
         except KeyError as e:
             raise e
@@ -578,6 +624,8 @@ class ReceptionistNode(Node):
             professors.append({"id": professor.id, "title": professor.title, "first_name": professor.first_name, "last_name": professor.last_name})
             
         self._memory["professors"] = professors
+        self.get_logger().info(f"Loaded {len(professors)} professors")
+        self.get_logger().debug(f"Professors: {professors}")
         return professors
     
     async def _check_and_load_consulation_hour_info(self) -> bool:
@@ -589,6 +637,11 @@ class ReceptionistNode(Node):
         request.prof_id = professor["id"]
         
         response: GetConsultationHour.Response = await run_service_request(self, self.__get_consultation_hour_info, request, timeout_sec=self._service_timeout)
+        self.get_logger().debug(
+            f"Consultation hour for professor id {request.prof_id}: return code {response.return_code}, "
+            f"now {response.current_consultation_hour}, room {response.room_name!r}, "
+            f"next {response.next_consultation_hour!r}, coordinates ({response.room_coordinates.x:.2f}, "
+            f"{response.room_coordinates.y:.2f}, {response.room_coordinates.yaw:.2f})")
         
         if response.return_code == GetConsultationHour.Response.ERROR:
             raise ValueError("Error while trying to reach Server!")
@@ -617,6 +670,14 @@ class ReceptionistNode(Node):
     def _num_to_words(self, num, to="ordinal"):
         return num2words(num, lang="de", to=to)
     
+    def _message_name(self, message) -> str:
+        # messages are stored as dicts, so look the name up for the logs
+        return next((name for name, entry in self._available_messages.items() if entry is message), "?")
+    
+    def _memory_for_log(self) -> dict:
+        # the professor list is long and only changes once per visit
+        return {key: entry for key, entry in self._memory.items() if key != "professors"}
+    
     def _get_memory_entry(self, name: str):
         if name in self._memory:
             return self._memory[name]
@@ -639,8 +700,11 @@ class ReceptionistNode(Node):
     
     def _goal_callback(self, goal_request):
         if not self._lock_callback.acquire(blocking=False):
-            self.get_logger().warning("Rejected speech request: another request is still running")
+            self.get_logger().warning("Rejected visit request: another visit is still running")
             return GoalResponse.REJECT
+        self.get_logger().info(
+            f"Accepted visit request: visitor at {goal_request.distance:.2f} m, "
+            f"{round(math.degrees(goal_request.angle))} deg (confidence {goal_request.confidence:.2f})")
         return GoalResponse.ACCEPT
     
     # AI generated check
@@ -809,6 +873,7 @@ class ReceptionistNode(Node):
         )
     
     async def _send_goal(self, client: ActionClient, goal, feedback_callback=None) -> ClientGoalHandle:
+        self.get_logger().debug(f"Sending goal to worker '{client._action_name}'")
         worker_handle = await send_universal_goal(self, client, goal, self._action_timeout, feedback_callback=feedback_callback)
 
         with self._lock_worker_handle:

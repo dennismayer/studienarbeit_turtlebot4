@@ -23,13 +23,13 @@ def _create_node(executable: str, name: str, namespace: str = ""):
     )
 
 def generate_launch_description():
-    server_connector_node = _create_node(
+    receptionist_bot_node = _create_node(
         executable="receptionistNode",
-        name="ReceptionistNode",
+        name="Receptionist",
     )
 
     return LaunchDescription([
-        server_connector_node
+        receptionist_bot_node
     ])
 
 if __name__ == '__main__':
