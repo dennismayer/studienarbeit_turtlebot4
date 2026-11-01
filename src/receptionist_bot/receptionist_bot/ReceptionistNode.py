@@ -7,7 +7,7 @@ import numpy as np
 from typing import TYPE_CHECKING, Mapping, Any, Sequence
 from dotenv import load_dotenv
 import yaml
-import num2words
+from num2words import num2words
 
 import boto3
 from botocore.config import Config
@@ -54,13 +54,13 @@ PROF_INFO_ACTION = 'get_consultation_hour'
 
 TIMEOUT_START_CLIENT = 30.0
 ENV_FILE_PATH = "/home/ubuntu/turtlebot4_ws/.env"
-DIALOG_SCRIPT_NAME = "short_test_script.yaml"
+DIALOG_SCRIPT_NAME = "main_script.yaml"
 ACTION_TIMEOUT = 5.0
 ORCHESTRATOR_TIMEOUT = 120.0
 MAX_TRY_SPEECH = 3
-
-class RetryError(Exception):
-    pass
+COORDINATE_HOME_BASE_X = 0.0
+COORDINATE_HOME_BASE_Y = 0.0
+COORDINATE_HOME_BASE_YAW = 0.0
 
 class MESSAGE_TYPE(Enum):
     STANDARD  = 0
@@ -85,11 +85,11 @@ class ReceptionistNode(Node):
     
     def _declare_node_variables(self):
         if not load_dotenv(ENV_FILE_PATH):
-            raise FileExistsError(f"No .env file at: {ENV_FILE_PATH}")
+            raise FileNotFoundError(f"No .env file at: {ENV_FILE_PATH}")
         
         script_path = Path(get_package_share_directory(PACKAGE_NAME)) / "dialog_scripts" / DIALOG_SCRIPT_NAME
         if not os.path.isfile(script_path):
-            raise FileExistsError(f"No dialog file at: {script_path}")
+            raise FileNotFoundError(f"No dialog file at: {script_path}")
         
         with script_path.open("r", encoding="utf-8") as file:
             self._dialog_script = yaml.safe_load(file)
@@ -155,6 +155,7 @@ class ReceptionistNode(Node):
         # define local variables
         try:
             self._retry = False
+            self._override_retry_message = None
             self._available_messages = self._dialog_script["messages"]
             self._next_message = self._available_messages[self._dialog_script["start"]]
             self._memory = {}
@@ -162,8 +163,10 @@ class ReceptionistNode(Node):
             await self._get_professors()
             
             while self._next_message is not None:   
-                # todo check for cancel 
-                # todo implement possibilty to stop every time
+                if goal_handle.is_cancel_requested:
+                    self.get_logger().info("Is canceling...")
+                    raise GoalCanceled()
+                
                 if "end" in self._next_message and self._next_message["end"]:
                     await self._end_script()
                     continue
@@ -185,17 +188,13 @@ class ReceptionistNode(Node):
             return self._handle_cancel_callback(goal_handle)
         
         except GoalAbort as e:
-            return self._handle_error_callback(goal_handle, f"{e}")
+            return await self._handle_error_callback(goal_handle, f"{e}")
         
         except GoalRejected as e:
-            return self._handle_error_callback(goal_handle, f"{e}")
-        
-        except RetryError:
-            # say Sorry I can't understand u and will stop this conversation
-            return VisitorDetected.Result()
+            return await self._handle_error_callback(goal_handle, f"{e}")
 
         except Exception as e:
-            return self._handle_error_callback(goal_handle, f"An Unknown Error occurred: {e}")
+            return await self._handle_error_callback(goal_handle, f"An Unknown Error occurred: {e}")
         finally:
             with self._lock_worker_handle:
                 if self._active_worker_handle:
@@ -206,14 +205,20 @@ class ReceptionistNode(Node):
             
             if self._away_from_station:
                 goal = MoveToLocation.Goal()
-                goal.x = 0
-                goal.y = 0
-                goal.yaw = 0
+                goal.x = COORDINATE_HOME_BASE_X
+                goal.y = COORDINATE_HOME_BASE_Y
+                goal.yaw = COORDINATE_HOME_BASE_YAW
                 
                 try:
                     await self._run_worker(self.__driving_navigator_client, goal, timeout_sec=180.0)
                 except Exception as e:
-                    self.get_logger().error("Counldn't get back to station!")
+                    self.get_logger().error(f"Couldn't get back to station: {e}")
+                    raise RuntimeError("Can not return to station") from e
+                
+                self._away_from_station = False
+                
+            #release lock
+            self._lock_callback.release()
     
     async def _end_script(self):
         if not self._next_message:
@@ -227,13 +232,15 @@ class ReceptionistNode(Node):
         
         self._next_message = None
     
-    def _extract_message_based_on_retry(self) -> str:
+    def _extract_message_based_on_retry(self) -> str | None:
         if not self._next_message:
             raise ValueError("next message not defined")
         if self._retry:
             if self._counter_retrys >= (MAX_TRY_SPEECH - 1):
-                raise RetryError
-            message_str = self._next_message["retry_say"]
+                self._next_message = self._available_messages[self._dialog_script["give_up"]]
+                return None
+            message_str = self._override_retry_message if self._override_retry_message else self._next_message["retry_say"]
+            self._override_retry_message = None
             self._counter_retrys += 1
         else:
             message_str = self._next_message["say"]
@@ -243,8 +250,8 @@ class ReceptionistNode(Node):
         return message_str
     
     def _determine_message_type(self) -> MESSAGE_TYPE:
-        if self._next_message_name is not None and "action" in self._next_message_name:
-            action = self._next_message_name["action"]
+        if self._next_message is not None and "action" in self._next_message:
+            action = self._next_message["action"]
             match action:
                 case "drive":
                     return MESSAGE_TYPE.DRIVE
@@ -256,8 +263,12 @@ class ReceptionistNode(Node):
                     raise ValueError(f"Action not defined: {action}")
         return MESSAGE_TYPE.STANDARD
     
-    async def _react_to_standard_message(self): 
+    async def _react_to_standard_message(self):         
         message_str = self._extract_message_based_on_retry()
+        
+        # stops if retry was to often
+        if not message_str:
+            return
                    
         if not self._next_message:
             raise ValueError("Next message not defined")
@@ -268,6 +279,11 @@ class ReceptionistNode(Node):
             transcribe_prompt=self._get_transcription_prompt())
         
         orchestrator_result = await self._run_worker(self.__audio_orchestrator_client, goal, timeout_sec=self._orchestrator_timeout)
+        
+        if not orchestrator_result.transcribed_text:
+            self._next_message = self._available_messages[self._next_message["fallback"]]
+            self._retry = True
+            return
         
         message = {
             "role": "user",
@@ -287,12 +303,34 @@ class ReceptionistNode(Node):
             self._retry = True
             return
         
-        self._next_message_name = next((block["goto"] for block in self._next_message["transitions"] if block["if"] == reply["choice"]), None)
-        self._next_message = self._available_messages[self._next_message_name] if self._next_message_name is not None else None
-        
         for extraction in extract_list:
-            self._memory[extraction] = reply[extraction]
-            self.get_logger().info(f"Saved memory: {extraction}: {reply[extraction]}")
+            if "options" in self._next_message["extract"][extraction]:
+                match self._next_message["extract"][extraction]["options"]:
+                    case "professors":
+                        for prof in self._memory["professors"]:
+                            if prof["id"] == int(reply[extraction]):
+                                self._memory[extraction] = prof
+                                break
+                    case _:
+                        pass # never reaches that case
+            else:
+                self._memory[extraction] = reply[extraction]
+            self.get_logger().info(f"Saved memory: {extraction}: {self._memory[extraction]}")
+        
+        for transition_block in self._next_message["transitions"]:
+            if transition_block["if"] == reply["choice"]:
+                self._next_message = self._available_messages[transition_block["goto"]]
+                
+                #set variable
+                if "set" in transition_block:
+                    for name_variable in transition_block["set"]:
+                        self._memory[name_variable] = transition_block["set"][name_variable]
+                
+                # load retry_say text
+                if "retry_say" in transition_block:
+                    self._override_retry_message = transition_block["retry_say"]
+                    self._retry = True
+                    return
 
     async def _react_to_drive_message(self):
         if not self._next_message:
@@ -311,20 +349,21 @@ class ReceptionistNode(Node):
         self._away_from_station = True
         
         goal = MoveToLocation.Goal()
-        goal.x = target_coordinates.x
-        goal.y = target_coordinates.y
-        goal.yaw = target_coordinates.yaw
+        goal.x = target_coordinates["x"]
+        goal.y = target_coordinates["y"]
+        goal.yaw = target_coordinates["yaw"]
         
         try:
             result: MoveToLocation.Result = await self._run_worker(self.__driving_navigator_client, goal, timeout_sec=180.0)
+            if not result.success:
+                raise GoalAbort("Couldn't reach goal")
         except GoalAbort:
             self._next_message = self._available_messages[self._next_message["on_failure"]]
             return
         finally:
             await self._wait_for_result(worker_handle_audio, self._orchestrator_timeout)
             
-        if not result.success:
-            raise GoalAbort("Couldn't reach goal")
+        
         
         self._next_message = self._available_messages[self._next_message["on_success"]]
     
@@ -335,9 +374,10 @@ class ReceptionistNode(Node):
         message = self._next_message["say"]
         
         upload_para = UploadParams()
-        upload_para.message = self._next_message["message"]
+        upload_para.message = self._next_message["message"].format(**self._memory)
         upload_para.sender_name = self._get_memory_entry("name")
         upload_para.user_id = self._get_memory_entry("professor")["id"]
+        upload_para.send_file = self._memory.get("send_file", False)
         
         try:
             await self._run_worker(
@@ -347,6 +387,7 @@ class ReceptionistNode(Node):
             )
         except GoalAbort:
             self._next_message = self._available_messages[self._next_message["on_failure"]]
+            return
         
         self._next_message = self._available_messages[self._next_message["on_success"]]
     
@@ -364,7 +405,15 @@ class ReceptionistNode(Node):
             if await self._check_and_load_consulation_hour_info():
                 self._next_message = self._available_messages[self._next_message["on_success"]]
             else:
-                self._next_message = self._available_messages[self._next_message["on_failure"]]
+                if self._get_memory_entry("no_consultation_hour"):
+                    self._next_message = self._available_messages[self._next_message["on_no_consultation_hour"]]
+                else:
+                    self._next_message = self._available_messages[self._next_message["on_not_now"]]
+        except KeyError as e:
+            raise e
+        except Exception as e:
+            self.get_logger().error(f"Error while checking consultation hour: {e}")
+            self._next_message = self._available_messages[self._next_message["on_failure"]]
         finally:
             await self._wait_for_result(worker_handle_audio, self._orchestrator_timeout)
             
@@ -386,7 +435,7 @@ class ReceptionistNode(Node):
             raise ValueError(f"{reply["choice"]} not a valid answer option ({transition_list})")
         
         for extraction_id in extract_id_options:
-            if reply[extract_id_options] not in extract_id_options:
+            if reply[extraction_id] not in extract_id_options[extraction_id]:
                 raise ValueError(f"{reply[extraction_id]} not a valid answer option ({extract_id_options})")
         
         return reply
@@ -433,15 +482,32 @@ class ReceptionistNode(Node):
         
         response: GetConsultationHour.Response = await run_service_request(self, self.__get_consultation_hour_info, request, timeout_sec=10.0)
         
+        if response.return_code == GetConsultationHour.Response.ERROR:
+            raise ValueError("Error while trying to reach Server!")
+        elif response.return_code == GetConsultationHour.Response.NO_CONSULTATION_HOUR:
+            self._memory["no_consultation_hour"] = True
+            return False
+        
+        self._memory["no_consultation_hour"] = False
         self._memory["professor_room"] = response.room_name
         current_consultation_hour = response.current_consultation_hour
         
         if current_consultation_hour:
             self._memory["drive_goal"] = {"x": response.room_coordinates.x, "y": response.room_coordinates.y, "yaw": response.room_coordinates.yaw}
         else:
-            self._memory["next_consultation_hour"] = response.next_consultation_hour
+            self._memory["next_consultation_hour"] = self._make_time_string_readable(response.next_consultation_hour)
         
         return current_consultation_hour
+    
+    def _make_time_string_readable(self, string: str):
+        [date, time] = string.split(";")
+        [day, month, year] = date.split(".")
+        [hour, minute] = time.split(":")
+        
+        return f"{self._num_to_words(day)} {self._num_to_words(month)} um {self._num_to_words(hour, to="cardinal")} Uhr {self._num_to_words(minute, to="cardinal") if minute != "00" else ""}"
+        
+    def _num_to_words(self, num, to="ordinal"):
+        return num2words(num, lang="de", to=to)
     
     def _get_memory_entry(self, name: str):
         if name in self._memory:
@@ -453,7 +519,7 @@ class ReceptionistNode(Node):
             case "professors":
                 return_para = []
                 for professor in self._get_memory_entry("professors"):
-                    return_para.append(f"{professor.title} {professor.first_name} {professor.last_name}")
+                    return_para.append(f"{professor["title"]} {professor["first_name"]} {professor["last_name"]}")
             case _:
                 return_para = self._get_memory_entry(name)
         
@@ -469,26 +535,120 @@ class ReceptionistNode(Node):
             return GoalResponse.REJECT
         return GoalResponse.ACCEPT
     
+    # AI generated check
     def _check_script_file(self):
-        pass
+        # collects every problem first, so one start shows all script errors at once
+        errors = []
+        script = self._dialog_script
+
+        for key in ("base_prompt", "start", "give_up", "messages"):
+            if key not in script:
+                errors.append(f"Missing top level key '{key}'")
+        if errors:
+            raise ValueError("Invalid dialog script:\n- " + "\n- ".join(errors))
+
+        messages = script["messages"]
+
+        def check_target(message_name: str, key: str, target):
+            if target not in messages:
+                errors.append(f"{message_name}: '{key}' points to unknown message '{target}'")
+
+        check_target("top level", "start", script["start"])
+        check_target("top level", "give_up", script["give_up"])
+
+        # outcome keys every action message needs, plus extra keys the action reads
+        action_keys = {
+            "drive": ["on_success", "on_failure"],
+            "upload": ["on_success", "on_failure", "message"],
+            "look_for_consultation_hour": ["on_success", "on_not_now", "on_no_consultation_hour", "on_failure"],
+        }
+        supported_options = ["professors"]
+
+        for name, message in messages.items():
+            if not isinstance(message, dict):
+                errors.append(f"{name}: is not a mapping (missing 'say:'?)")
+                continue
+            if "say" not in message:
+                errors.append(f"{name}: missing 'say'")
+
+            if message.get("end"):
+                continue
+
+            if "action" in message:
+                action = message["action"]
+                if action not in action_keys:
+                    errors.append(f"{name}: unknown action '{action}'")
+                    continue
+                for key in action_keys[action]:
+                    if key not in message:
+                        errors.append(f"{name}: action '{action}' needs '{key}'")
+                    elif key.startswith("on_"):
+                        check_target(name, key, message[key])
+                continue
+
+            # standard message: asks, listens and lets the LLM choose a transition
+            for key in ("retry_say", "prompt", "transitions", "fallback"):
+                if key not in message:
+                    errors.append(f"{name}: missing '{key}'")
+            if "fallback" in message:
+                check_target(name, "fallback", message["fallback"])
+
+            for transition in message.get("transitions", []):
+                choice = transition.get("if")
+                if not isinstance(choice, str):
+                    errors.append(f"{name}: transition 'if: {choice}' is not a string (quote yes/no/on/off)")
+                elif choice == "unclear":
+                    errors.append(f"{name}: 'unclear' is reserved and added automatically")
+                if "description" not in transition:
+                    errors.append(f"{name}: transition '{choice}' missing 'description'")
+                if "goto" not in transition:
+                    errors.append(f"{name}: transition '{choice}' missing 'goto'")
+                else:
+                    check_target(name, f"goto of {choice}", transition["goto"])
+
+            for key, entry in message.get("extract", {}).items():
+                if "options" in entry:
+                    if entry["options"] not in supported_options:
+                        errors.append(f"{name}: extract '{key}' has unsupported options '{entry['options']}'")
+                elif "description" not in entry:
+                    errors.append(f"{name}: extract '{key}' missing 'description'")
+
+        if errors:
+            raise ValueError("Invalid dialog script:\n- " + "\n- ".join(errors))
     
     def _define_Tool(self, message: Mapping[str, Any]):
         input_properties = {}
         required = []
         extract_ids = []
-        extract_ids_options = []
+        extract_ids_options = {}
         
         if "extract" in message:
             extract = message["extract"]
-            for entry in extract:
-                type_extract = entry["type"] if "type" in entry else "string"
-                input_properties[entry] = {"type": type_extract, "description": entry["description"]}
-                required.append(entry)
-                extract_ids.append(entry)
+            for key in extract:
+                entry = extract[key]
                 if "options" in entry:
-                    options = self._get_memory_entry(entry["options"])
-                    input_properties[entry]["options"] = options
-                    extract_ids_options[entry] = (options)
+                    option_name = entry["options"]
+                    match option_name:
+                        case "professors":
+                            professor_list = self._get_memory_entry(entry["options"])
+                            enum_ids = []
+                            description_string_list = ["Die ID des Professors, zu dem der Besucher möchte:"]
+                            
+                            for prof in professor_list:
+                                enum_ids.append(str(prof["id"]))
+                                description_string_list.append(f"- {prof["id"]}: {prof["title"]} {prof["first_name"]} {prof["last_name"]}")
+                            
+                            input_properties[key] = {"type": "string", "enum": enum_ids, "description": "\n".join(description_string_list)}
+                            extract_ids_options[key] = enum_ids
+                        case _:
+                            raise NotImplementedError(f"Option: {option_name} not implemented for tool use")
+                    
+                else:
+                    type_extract = entry["type"] if "type" in entry else "string"
+                    input_properties[key] = {"type": type_extract, "description": entry["description"]}
+                required.append(key)
+                extract_ids.append(key)
+                    
                 
         
         transitions_list = []
@@ -584,10 +744,16 @@ class ReceptionistNode(Node):
                     for worker_handle in self._active_worker_handle:
                         worker_handle.cancel_goal_async()
             return CancelResponse.ACCEPT 
-    
-    #todo On error say: "Tut mir leid ich habe momentan einen fehler"?
-    def _handle_error_callback(self, goal_handle, error_msg):
+
+    async def _handle_error_callback(self, goal_handle, error_msg):
         self.get_logger().error(f"Request aborted: {error_msg}")
+        try:
+            goal = AudioOrchestrator.Goal()
+            goal.question_or_sentence = "Tut mir leid, ich muss fehlerbedingt abbrechen."
+            goal.response_handling = AudioOrchestrator.Goal.NO_RESPONSE
+            await self._run_worker(self.__audio_orchestrator_client, goal, timeout_sec=ORCHESTRATOR_TIMEOUT) 
+        except Exception as e:
+            self.get_logger().error(f"Not able to play end at error: {e}")
         goal_handle.abort()
         return self._assemble_result(False, error_msg)
     
@@ -597,6 +763,7 @@ class ReceptionistNode(Node):
         return self._assemble_result(False, "Canceled")
     
     def destroy_node(self):
+        super().destroy_node()
         self._bedrock_client.close()
     
 

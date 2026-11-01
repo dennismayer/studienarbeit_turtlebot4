@@ -225,9 +225,12 @@ class SpeechOrchestratorNode(Node):
             if request.response_handling == AudioOrchestrator.Goal.NO_RESPONSE:
                 return self._goal_no_response_handling(goal_handle)
             
-            # Recording data
-            listener_result: AudioListener.Result = await self._record_audio(goal_handle, request)
-            recording_path = Path(listener_result.file_path)
+            # Recording data only if it is nessessary
+            if request.response_handling == AudioOrchestrator.Goal.UPLOAD_RESPONSE and not request.upload_parameters.send_file:
+                listener_result = AudioListener.Result()
+            else:
+                listener_result: AudioListener.Result = await self._record_audio(goal_handle, request)
+                recording_path = Path(listener_result.file_path)
             
             # check if upload response or do something else
             if request.response_handling == AudioOrchestrator.Goal.UPLOAD_RESPONSE:
@@ -406,7 +409,7 @@ class SpeechOrchestratorNode(Node):
         goal.user_id = request.upload_parameters.user_id
         goal.message = request.upload_parameters.message
         goal.sender_name = request.upload_parameters.sender_name
-        goal.send_file = True
+        goal.send_file = request.upload_parameters.send_file
         goal.audio_duration_s = round(duration)
         result: UploadFile.Result = await self._run_worker(
             self.__server_upload_client,
