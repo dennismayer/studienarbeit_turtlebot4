@@ -69,7 +69,7 @@ messages:
         description: "Der Professor, zu dem der Besucher möchte im Json Format. Auswahl aus Optionen."
         options: professors
       professor_name:
-        description: "Den Namen des Professors in klarer Sprache als string"
+        description: "Den Namen des Professors in klarer Sprache als string. Lasse den Titel weg."
     transitions:
       - if: professor_given
         description: "Der Besucher hat einen Professor genannt"
@@ -191,7 +191,7 @@ messages:
         description: "Der Professor, für den das Objekt bestimmt ist, im Json Format. Auswahl aus Optionen."
         options: professors
       professor_name:
-        description: "Den Namen des Professors in klarer Sprache als string"
+        description: "Den Namen des Professors in klarer Sprache als string. Lasse den Titel weg."
       object:
         description: "Was der Besucher abgibt, kurz mit Artikel (z. B. 'Unterlagen', 'ein Paket'). Nennt er es nicht, schreibe 'etwas'."
     transitions:
@@ -243,13 +243,13 @@ messages:
   record_dropoff_note:
     say: "Bitte sprechen Sie jetzt. Wenn Sie fertig sind, machen Sie einfach eine kurze Pause."
     action: upload
-    message: "{name} hat {object} für Sie an der Rezeption abgegeben."
+    message: "{name} hat {object} für Sie beim Rezeptionsrobotor abgegeben."
     on_success: note_sent
     on_failure: note_failed
 
   send_dropoff_note:
     say: "Alles klar, ich gebe {professor_name} Bescheid."
     action: upload
-    message: "{name} hat {object} für Sie an der Rezeption abgegeben."
+    message: "{name} hat {object} für Sie beim Rezeptionsrobotor abgegeben."
     on_success: note_sent
     on_failure: note_failed
