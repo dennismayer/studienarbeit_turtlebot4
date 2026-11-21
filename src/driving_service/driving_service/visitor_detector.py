@@ -13,8 +13,9 @@ from typing import List, Optional, Sequence
 from driving_service.params import check
 import numpy as np
 
-# neighboring points further apart than this start a new cluster
-MAX_POINT_GAP = 0.1
+# neighboring points further apart than this start a new cluster; at ankle height
+# a person is two legs, often 0.15 m apart
+MAX_POINT_GAP = 0.2
 # fewer points are noise, even when their width fits (a person at 2.5 m gives 16)
 MIN_CLUSTER_POINTS = 3
 
@@ -154,6 +155,9 @@ class VisitorDetector:
             np.isfinite(ranges)
             & (ranges >= range_min)
             & (ranges <= range_max)
+            # beyond the detection range: else the background seen between two legs
+            # splits a person into two clusters
+            & (ranges <= self._params.max_distance)
             & (np.abs(relative) <= half_window)
         )
         order = np.argsort(relative[mask])

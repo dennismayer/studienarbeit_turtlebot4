@@ -185,6 +185,9 @@ while next_message is not None:
         
         response = call_llm_api(client, system_prompt, [message], tool)
         
+        if "message" not in response["output"]:
+            raise ValueError("No message field in response")
+        
         # the structured answer arrives as an already parsed dict in the toolUse block, not as text
         tool_use = next((block["toolUse"] for block in response["output"]["message"]["content"] if "toolUse" in block), None)
         if response["stopReason"] == "tool_use" and tool_use is not None:
