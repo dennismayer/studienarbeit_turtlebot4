@@ -19,3 +19,19 @@ _Avoid_: Session, conversation, tour
 **Location**:
 A saved, named pose on the map (position and heading) the robot can drive to.
 _Avoid_: Waypoint, exhibit, goal, target
+
+**Professor**:
+A person from the robot's staff list whom a **Visitor** can ask for. Anyone not on that list is unknown to the robot, even if they work in the building.
+_Avoid_: Contact, employee, staff member
+
+**Consultation hour**:
+A time window in which a **Professor** receives visitors in a specific room. A **Professor** without a room has no consultation hours. The robot only guides a **Visitor** to a **Professor** during one.
+_Avoid_: Office hour, availability, free time
+
+**Drop-off**:
+A **Visit** in which the **Visitor** leaves an object on the robot's tray for a **Professor**, instead of meeting them.
+_Avoid_: Hand-over, delivery, parcel
+
+**Note**:
+What the robot sends to a **Professor** on a **Visitor**'s behalf: a short text, optionally with the **Visitor**'s voice recording attached.
+_Avoid_: Message, upload, notification

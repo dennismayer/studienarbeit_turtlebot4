@@ -30,15 +30,47 @@ messages:
       Ein Vorname allein reicht. Sätze wie "Ich bin Anna" oder "Anna Müller" zählen
       als Name. Ist kein Name erkennbar, wähle "unclear".
     extract:
-      name: "Der Name des Besuchers, so wie er ihn genannt hat"
+      name: 
+        description: "Der Name des Besuchers, so wie er ihn genannt hat"
     transitions:
       - if: name_given
         description: "Der Besucher hat einen Namen genannt"
-        goto: ask_talk
+        goto: ask_professor
     fallback: ask_name
 
+  ask_professor:
+    say: "Schön dich kennenzulernen, {name}! Zu welchem Professor möchtest du?"
+    retry_say: "Das habe ich nicht verstanden. Wie heißt der Professor, zu dem du möchtest?"
+    prompt: |
+      Der Roboter hat gefragt, zu welchem Professor der Besucher möchte.
+      Der Name kann unvollständig oder falsch erkannt sein, z. B. nur der Nachname
+      oder "Professor Maier" statt "Meyer". Ordne ihn dem passenden Professor zu.
+      Passt er zu keinem oder zu mehreren gleich gut, wähle "unclear".
+    transcriber_hints: professors
+    extract:
+      professor:
+        description: "Der Professor, zu dem der Besucher möchte im Json Format. Auswahl aus Optionen."
+        options: professors
+      professor_name:
+        description: "Den Namen des Professors in klarer Sprache als string"
+    transitions:
+      - if: professor_given
+        description: "Der Besucher hat einen Professor genannt"
+        goto: drive_to_professor
+    fallback: ask_professor
+
+  drive_to_professor:
+    say: "Folge mir bitte, ich bringe dich zu {professor_name}."
+    action: drive
+    on_success: ask_talk
+    on_failure: drive_failed
+
+  drive_failed:
+    say: "Ich komme leider nicht hin. Du findest {professor_name} in Raum {professor_room}."
+    end: true
+
   ask_talk:
-    say: "Schön dich kennenzulernen, {name}! Möchtest du dich mit mir unterhalten?"
+    say: "Da sind wir, {name}! Möchtest du dich noch mit mir unterhalten?"
     retry_say: "Das habe ich nicht verstanden. Möchtest du dich mit mir unterhalten, ja oder nein?"
     prompt: |
       Der Roboter hat gefragt, ob der Besucher sich mit ihm unterhalten möchte.

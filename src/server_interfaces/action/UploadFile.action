@@ -1,0 +1,14 @@
+string file_path
+uint32 user_id
+string sender_name
+string message
+uint32 audio_duration_s
+bool send_file
+---
+bool success
+string message
+---
+uint8 RECEIVED=0
+uint8 UPLOAD_LINK_RECEIVED=1
+uint8 UPLOADED=2
+uint8 state

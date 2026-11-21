@@ -2,3 +2,4 @@
 int32 user_id
 string sender_name
 string message
+bool send_file

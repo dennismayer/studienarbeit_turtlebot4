@@ -7,6 +7,7 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(speaking_interfaces REQUIRED)
 # uncomment the following section in order to fill in
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
@@ -14,9 +15,14 @@ find_package(rosidl_default_generators REQUIRED)
 
 # rosidl_generate_interfaces fails without any interface file,
 # uncomment the block once the first .msg/.srv/.action exists
-# rosidl_generate_interfaces(${PROJECT_NAME}
-#   "msg/Example.msg"
-# )
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/Professor.msg"
+  "msg/RoomCoordinates.msg"
+  "action/UploadFile.action"
+  "srv/GetConsultationHour.srv"
+  "srv/GetProfessors.srv"
+  DEPENDENCIES speaking_interfaces
+)
 
 ament_export_dependencies(rosidl_default_runtime)
 

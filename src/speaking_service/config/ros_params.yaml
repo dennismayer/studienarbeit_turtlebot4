@@ -86,6 +86,11 @@
     # start of the first word isn't cut off.
     pre_start_recording_time: 0.5
 
+    # Seconds of trailing silence kept after the last speech block, so the
+    # end of the last word isn't cut off. The rest of the silence is dropped.
+    # Limited to the goal's silence_duration.
+    post_recording_time: 0.3
+
 # ---------------------------------------------------------------------------
 # AudioTranscriberWorker: speech-to-text with faster-whisper
 # ---------------------------------------------------------------------------
@@ -137,6 +142,19 @@
     player_action: "/AudioWorkers/audioPlayer"
     listener_action: "/AudioWorkers/audioListener"
     transcriber_action: "/AudioWorkers/audioTranscriber"
+    uploader_action: "upload_file"
 
     # Timeout in seconds for action calls.
     action_timeout: 5.0
+
+    # Timeout in seconds for each worker action server to become
+    # available at startup. The node fails to start if one is missing.
+    client_start_timeout: 30.0
+
+    # Timeouts in seconds for each worker's result. On timeout the
+    # worker goal is canceled and the speech request is aborted.
+    synthesis_timeout: 45.0
+    player_timeout: 45.0
+    listener_timeout: 60.0
+    transcriber_timeout: 45.0
+    uploader_timeout: 60.0

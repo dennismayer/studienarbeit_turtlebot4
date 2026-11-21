@@ -81,3 +81,35 @@
 
     # Seconds after that during which scans are ignored.
     cooldown_period: 5.0
+
+# ---------------------------------------------------------------------------
+# Test nodes (launch/driving_service_test.launch.py): stand in for the two
+# nodes above when the robot must not move.
+# ---------------------------------------------------------------------------
+
+# FakeNavigator: MoveToLocation server that waits instead of driving
+/FakeNavigator:
+  ros__parameters:
+    # Name of the MoveToLocation action server, same as the Navigator's.
+    action_name: "moveToLocation"
+
+    # Seconds a goal "drives" before it is reported as reached.
+    drive_duration: 5.0
+
+# ButtonVisitorTrigger: a faceplate button press starts a visit
+/ButtonVisitorTrigger:
+  ros__parameters:
+    # VisitorDetected action server, served by the receptionist main loop.
+    action_name: "visitorDetected"
+
+    # InterfaceButtons topic of the Create 3 base.
+    buttons_topic: "/interface_buttons"
+
+    # Faceplate button that starts a visit: button_1 (one dot) or button_2
+    # (two dots). The power button can't be used.
+    button: "button_1"
+
+    # Generic visitor sent with every press.
+    visitor_distance: 1.0
+    visitor_angle: 0.0
+    visitor_confidence: 0.9

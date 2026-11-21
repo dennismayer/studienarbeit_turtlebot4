@@ -1,0 +1,65 @@
+# Default parameters for the receptionist_bot nodes.
+#
+# Top-level keys are fully qualified node names (/<namespace>/<node_name>).
+# Node names and namespaces are not parameters: they are set in the launch
+# file and must match the keys below, otherwise the parameters are not applied.
+#   Receptionist: no namespace
+
+# ---------------------------------------------------------------------------
+# Receptionist: runs the dialog script for each visit
+# ---------------------------------------------------------------------------
+/Receptionist:
+  ros__parameters:
+    # Name of the action server that the visitor detector sends visits to.
+    action_name: "visitorDetected"
+
+    # Fully qualified names of the action and service servers the node uses.
+    # Must match each server's namespace + name.
+    audio_orchestrator_action: "speechRequest"
+    navigator_action: "moveToLocation"
+    professors_service: "get_professors"
+    consultation_hour_service: "get_consultation_hour"
+
+    # Absolute path to the .env file with the AWS credentials for Bedrock.
+    env_file_path: "/home/ubuntu/turtlebot4_ws/.env"
+
+    # Dialog script, looked up in the installed dialog_scripts directory.
+    dialog_script_name: "main_script.yaml"
+
+    # Answers per question, including the first one. After that many
+    # unclear answers the robot speaks the script's give_up message.
+    max_speech_tries: 3
+
+    # Station the robot drives back to after guiding a visitor
+    # (map frame, meters and radians).
+    home_base_x: 0.0
+    home_base_y: 0.0
+    home_base_yaw: 0.0
+
+    # Timeout in seconds for action calls.
+    action_timeout: 5.0
+
+    # Timeout in seconds for each action and service server to become
+    # available at startup. The node fails to start if one is missing.
+    client_start_timeout: 30.0
+
+    # Timeout in seconds for one AudioOrchestrator request. Covers speaking,
+    # listening and transcribing or uploading.
+    orchestrator_timeout: 120.0
+
+    # Timeout in seconds for one drive, to a professor or back to the station.
+    drive_timeout: 180.0
+
+    # Timeout in seconds for the GetProfessors and GetConsultationHour services.
+    service_timeout: 10.0
+
+    # Bedrock LLM that evaluates the visitor's answers.
+    llm_region: "eu-central-1"
+    llm_model_id: "eu.amazon.nova-2-lite-v1:0"
+    llm_max_tokens: 300
+
+    # A short dialog reply takes about 1 s; these keep the robot from hanging
+    # when Bedrock is slow. Worst case per answer: read timeout x attempts.
+    llm_connect_timeout: 5.0
+    llm_read_timeout: 15.0
+    llm_max_attempts: 2

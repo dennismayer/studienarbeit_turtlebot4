@@ -1,0 +1,28 @@
+# Default parameters for the server_connector node.
+#
+# Top-level keys are fully qualified node names (/<namespace>/<node_name>).
+# Node names and namespaces are not parameters: they are set in the launch
+# file and must match the keys below, otherwise the parameters are not applied.
+#   ServerConnectorNode: no namespace
+
+# ---------------------------------------------------------------------------
+# ServerConnectorNode: gateway between the ROS nodes and the web server
+# ---------------------------------------------------------------------------
+/ServerConnectorNode:
+  ros__parameters:
+    # Names of the services and the action server this node provides.
+    # Clients must use the same names (e.g. uploader_action in
+    # speaking_service, PROF_ACTION / PROF_INFO_ACTION in receptionist_bot).
+    get_professors_service: "get_professors"
+    get_consultation_hour_service: "get_consultation_hour"
+    upload_file_action: "upload_file"
+
+    # Base URL of the web server.
+    web_address: "http://192.168.0.92:8080"
+
+    # Path of the .env file with SERVER_API_TOKEN.
+    # Only loaded when the environment variable ENVIRONMENT=dev is set.
+    env_file_path: "/home/ubuntu/turtlebot4_ws/.env"
+
+    # Timeout in seconds for each HTTP request to the web server and S3.
+    server_timeout: 5.0

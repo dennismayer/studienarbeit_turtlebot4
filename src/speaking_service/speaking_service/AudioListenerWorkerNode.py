@@ -59,6 +59,11 @@ class AudioListenerActionServer(Node):
                  description="Seconds of audio kept from before speech was detected",
                  read_only=True,
                  type=ParameterType.PARAMETER_DOUBLE)),
+            ("post_recording_time", 0.3,
+             ParameterDescriptor(
+                 description="Seconds of trailing silence kept after the last speech block",
+                 read_only=True,
+                 type=ParameterType.PARAMETER_DOUBLE)),
             ("recording_sample_rate", 16000,
              ParameterDescriptor(
                  description="Sample rate of the recorded audio",
@@ -80,11 +85,13 @@ class AudioListenerActionServer(Node):
         self.__bs = get_param(self, "input_blocksize", int)
         self.__ch = get_param(self, "recording_channels", int)
         self.__silent_threshold = get_param(self, "silence_threshold", float)
+        self.__post_recording_time = get_param(self, "post_recording_time", float)
         self.audio_queue = queue.Queue()
         self.lock_listener_node = Lock()
         self.preroll_lock = Lock()
         self.recording_event = Event()
-        self.preroll = deque(maxlen=int(get_param(self, "pre_start_recording_time", float) * self.__sr/self.__bs))
+        self._preroll_blocks = round(get_param(self, "pre_start_recording_time", float) * self.__sr/self.__bs)
+        self.preroll = deque(maxlen=self._preroll_blocks)
         
         
         self.TIME_PER_BLOCK = self.__bs/self.__sr
@@ -141,33 +148,43 @@ class AudioListenerActionServer(Node):
                 goal_handle.abort()
                 return self.assemble_result(False, "NoAudioStream", "", 0.0) 
             
-            start_timeout_blocks = int(request.start_timeout * self.__sr/self.__bs)
-            max_duration_blocks = int(request.max_duration * self.__sr/self.__bs)
-            end_timeout_blocks = int(request.silence_duration * self.__sr/self.__bs)
+            start_timeout_blocks = round(request.start_timeout * self.__sr/self.__bs)
+            max_duration_blocks = round(request.max_duration * self.__sr/self.__bs)
+            end_timeout_blocks = round(request.silence_duration * self.__sr/self.__bs)
+            post_recording_blocks = round(self.__post_recording_time * self.__sr / self.__bs)
             
-            total_blocks = 0
+            # limit because there wouldn't be enough blocks in queue
+            if post_recording_blocks > end_timeout_blocks:
+                post_recording_blocks = end_timeout_blocks
+                self.get_logger().warning("Post recording time limited to end timeout time!")
+            
+            # limit because the file would close before anything was said    
+            if end_timeout_blocks < self._preroll_blocks:
+                end_timeout_blocks = self._preroll_blocks
+                self.get_logger().warning("Increased end timeout to not close before preroll is analysed!")
+            
+            total_written_blocks = 0
             start_silence_blocks = 0
             end_silence_blocks = 0
             heard_voice = False
             
-            get_total_recorded_time = lambda : (total_blocks - start_silence_blocks) * self.TIME_PER_BLOCK
+            get_total_recorded_time = lambda : total_written_blocks * self.TIME_PER_BLOCK
             
             feedback = AudioListener.Feedback()
 
             with sf.SoundFile(file_path, mode="wb", samplerate=self.__sr, channels=self.__ch) as f:
                 self.get_logger().info("Start recording...")
                 self.get_logger().info(f"Started recording after: {((time.perf_counter() - start_time)*1000):.2f} ms")   
-                 
-                # load preroll data
+                
                 with self.preroll_lock:
-                    for block in self.preroll:
-                        self.audio_queue.put(block)
                     self.recording_event.set()
+                
+                silent_queue = deque()
                 
                 while end_silence_blocks < end_timeout_blocks:
                     # check for cancelation
                     if goal_handle.is_cancel_requested:
-                        self.get_logger().info("Cancel request recieved")
+                        self.get_logger().info("Cancel request received")
                         goal_handle.canceled()
                         keep_file = heard_voice
                         if heard_voice:
@@ -187,17 +204,28 @@ class AudioListenerActionServer(Node):
                     block_silent = self.block_silent(block)
                     if not heard_voice and not block_silent:
                         heard_voice = True
+                        # load preroll data
+                        with self.preroll_lock:
+                            if self._preroll_blocks > self.audio_queue.qsize():
+                                self._drain_queue()
+                                for pre_roll_block in self.preroll:
+                                    self.audio_queue.put(pre_roll_block)
+                                continue
                     
                     if heard_voice:
                         if block_silent:
+                            silent_queue.append(block)
                             end_silence_blocks += 1
                         else:
+                            while len(silent_queue) != 0:
+                                f.write(silent_queue.popleft())
+                                total_written_blocks += 1
+                            f.write(block)
+                            total_written_blocks += 1
                             end_silence_blocks = 0
                         
                         feedback.state, feedback.recorded_time = AudioListener.Feedback.RECORDING, get_total_recorded_time()
                         goal_handle.publish_feedback(feedback)
-                        
-                        f.write(block)
                     else:
                         start_silence_blocks += 1
                         
@@ -210,8 +238,7 @@ class AudioListenerActionServer(Node):
                             return self.assemble_result(False, "StartTimeout", "",0.0)
                     
                     # evaluate total blocks
-                    total_blocks += 1
-                    if total_blocks >= max_duration_blocks:
+                    if (total_written_blocks + start_silence_blocks) >= max_duration_blocks:
                         self.get_logger().info("Time exceeds total timeout. Aborting")
                         goal_handle.abort()
                         keep_file = heard_voice
@@ -219,6 +246,16 @@ class AudioListenerActionServer(Node):
                             return self.assemble_result(False, "TotalTimeout", str(file_path),get_total_recorded_time())
                         else:
                             return self.assemble_result(False, "TotalTimeout", "",0.0)
+                
+                if total_written_blocks + post_recording_blocks > max_duration_blocks:
+                    post_recording_blocks = max_duration_blocks - total_written_blocks
+                    total_written_blocks = max_duration_blocks
+                    self.get_logger().warning("Reduced post recording time due to max recording time!")
+                else:
+                    total_written_blocks += post_recording_blocks
+                
+                for _ in range(post_recording_blocks):
+                    f.write(silent_queue.popleft())
                         
                 self.get_logger().info("Stop recording...")
                 
