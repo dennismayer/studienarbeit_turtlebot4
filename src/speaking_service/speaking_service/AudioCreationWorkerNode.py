@@ -23,6 +23,11 @@ DEFAULT_NODE_NAME = "AudioCreationWorker"
 DEFAULT_NAMESPACE = "/AudioWorkers"
 
 
+# default parameter in case no launch file is being used
+DEFAULT_NODE_NAME = "AudioCreationWorker"
+DEFAULT_NAMESPACE = "/AudioWorkers"
+
+
 class AudioCreationActionServer(Node):
     """Action Server for synthesising audio"""
     def __init__(self):        
